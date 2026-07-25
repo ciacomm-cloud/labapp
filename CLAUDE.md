@@ -181,8 +181,19 @@ uvicorn app.main:app --reload --port 8001
    (`app/routers/catalog.py` — `/api/catalog-items`). Lectura para `admin`/`tech`
    (`require_any_role`), escritura solo `admin` (`require_admin`). Probado
    end-to-end contra la DB real (crear/listar/duplicado 409/FK inexistente 404/borrar).
-5. Endpoint de captura semanal (`POST /catalog-items/{id}/logs`) — técnico
-   y admin pueden crear, solo admin puede corregir logs pasados.
+5. ✅ (2026-07-25) Endpoint de captura semanal (`app/routers/catalog.py`):
+   `POST /api/catalog-items/{id}/logs` — `admin`/`tech` pueden crear
+   (`require_any_role`), cada POST crea una fila nueva (histórico puro, no
+   upsert, múltiples logs por semana permitidos). `PUT
+   /api/catalog-items/{id}/logs/{log_id}` — solo `admin` puede corregir
+   logs pasados (`require_admin`). Reutiliza `validate_log_balances()` de
+   `inventory_rules.py` y `compute_log_metrics()` de `inventory_metrics.py`
+   — el response de ambos endpoints incluye `dias_transcurridos`,
+   `semaforo_antiguedad` y `estado_critico` calculados al vuelo. Probado
+   end-to-end contra la DB real: creación tech, múltiples logs sin upsert,
+   discard_reason obligatorio (422), saldo negativo (422), corrección de
+   tech rechazada (403), corrección de admin aplicada (200, `updated_by`
+   actualizado), `estado_critico` en escenario de rescate.
 6. Endpoints de dashboard: `/dashboard/summary`, `/dashboard/urgentes`,
    `/dashboard/export` (admin only).
 7. Frontend: tab "Inventarios" — primero vista de captura (técnico),
