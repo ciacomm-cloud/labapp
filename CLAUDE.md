@@ -194,8 +194,26 @@ uvicorn app.main:app --reload --port 8001
    discard_reason obligatorio (422), saldo negativo (422), corrección de
    tech rechazada (403), corrección de admin aplicada (200, `updated_by`
    actualizado), `estado_critico` en escenario de rescate.
-6. Endpoints de dashboard: `/dashboard/summary`, `/dashboard/urgentes`,
-   `/dashboard/export` (admin only).
+6. ✅ (2026-07-25) Endpoints de dashboard (`app/routers/dashboard.py`,
+   `require_admin` a nivel de router — los tres endpoints son admin-only):
+   - `GET /api/dashboard/summary?desde&hasta`: `total_frascos_laboratorio` y
+     `frascos_en_rescate_activos` son snapshot actual (suma sobre el log más
+     reciente de cada catálogo, vía `ROW_NUMBER() OVER (PARTITION BY
+     catalog_item_id ORDER BY created_at DESC)`); `porcentaje_merma` sí es
+     por periodo — `discarded_jars` / total de frascos registrados
+     (`normal+ready+rescue_1+rescue_2+discarded`) entre TODOS los logs con
+     `last_subculture_date` en `[desde, hasta]` (default: últimos 30 días).
+   - `GET /api/dashboard/urgentes`: log más reciente por catálogo, join con
+     especie/género, `ORDER BY last_subculture_date ASC` (= `dias_transcurridos`
+     desc), con métricas de `inventory_metrics.py` al vuelo.
+   - `GET /api/dashboard/export?desde&hasta&formato=csv|xlsx`: filtra
+     `InventoryLog` por `last_subculture_date` en el rango (no `created_at`),
+     un renglón por log (no solo el más reciente). Requirió agregar
+     `openpyxl` a `requirements.txt` (no había dependencia de Excel antes).
+   Probado end-to-end: acceso de tech rechazado (403) en los tres, cálculo
+   de totales/merma verificado con datos conocidos, orden de urgentes,
+   contenido de CSV y XLSX (parseado de vuelta con `openpyxl`), `formato`
+   inválido → 422.
 7. Frontend: tab "Inventarios" — primero vista de captura (técnico),
    después dashboard (admin).
 8. Seed de géneros/especies/catálogos existentes desde la hoja de cálculo
