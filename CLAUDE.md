@@ -69,6 +69,76 @@ labapp/
 └── CLAUDE.md
 ```
 
+## Despliegue en producción (labapp.castamay.com)
+
+**Arquitectura elegida: código y proceso corren bajo el usuario `caladiorosevelvet`
+(no bajo `castamay-labapp`), nginx hace reverse proxy hacia el backend.**
+
+Motivo — restricciones reales de permisos verificadas en el servidor:
+
+- `castamay-labapp` es un usuario de sistema propio de CloudPanel (dueño del
+  vhost/document root de `labapp.castamay.com`). No hay forma de operar como
+  ese usuario: no hay `su`/`sudo -u castamay-labapp` disponible (el único
+  `sudo` habilitado es `clpctlWrapper`, limitado a
+  `db:export/import`, `system:permissions:reset`, `varnish-cache:purge`).
+  Mover el código físicamente a su `htdocs/` no resuelve esto — el proceso
+  seguiría corriendo con el usuario que lo lanza, no con el dueño del
+  directorio.
+- No hay acceso de lectura/escritura a `/etc/nginx/*` (vhosts, sites-enabled).
+  Cualquier cambio a la config de nginx del sitio requiere el panel de
+  CloudPanel (rol admin) o acceso root directo — fuera del alcance de este
+  entorno.
+- Sí hay: (a) permiso de escritura de grupo sobre
+  `/home/castamay-labapp/htdocs/labapp.castamay.com/` (para depositar el
+  build estático del frontend cuando exista), y (b) systemd de usuario
+  (`systemctl --user`) + `linger` habilitado para `caladiorosevelvet`, igual
+  que el patrón ya usado por `lab.castamay.com` (usuario `castamay-lab`,
+  puerto 8765) — mismo mecanismo, distinto usuario.
+
+**Backend (ya desplegado):**
+
+- Unidad systemd de usuario: `~/.config/systemd/user/labapp-api.service`
+  (copia versionada en `deploy/labapp-api.service`).
+- Corre `uvicorn app.main:app --host 127.0.0.1 --port 8766 --workers 2`.
+- `systemctl --user enable --now labapp-api.service` + `loginctl enable-linger
+  caladiorosevelvet` → sobrevive reinicios y logout.
+- Verificado: `curl http://127.0.0.1:8766/api/health` → `{"status":"ok"}`.
+
+**Frontend (pendiente — fase 7 del plan):** una vez exista el build de
+Vite/React (`npm run build` → `dist/`), se copia el contenido de `dist/` a
+`/home/castamay-labapp/htdocs/labapp.castamay.com/` (permiso de grupo ya
+verificado), reemplazando el placeholder `index.php` actual.
+
+**Acción pendiente que requiere al admin de CloudPanel (no ejecutable desde
+este entorno):** editar el Vhost de `labapp.castamay.com` en el panel para:
+
+1. Agregar un `location /api/` con reverse proxy a `127.0.0.1:8766`.
+2. Cuando el frontend esté listo, cambiar `location /` para servir estático
+   con `try_files $uri $uri/ /index.html;` y remover el bloque
+   `location ~ \.php$` (ya no hay PHP que ejecutar).
+
+Snippet sugerido para pegar en el editor de Vhost de CloudPanel:
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8766;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# Cuando exista el build del frontend, reemplazar el location / por:
+# location / {
+#     try_files $uri $uri/ /index.html;
+# }
+```
+
+No se requiere recrear el site ni cambiar su "tipo" en CloudPanel — basta con
+este snippet en el Vhost existente; el `location ~ \.php$` puede quedar sin
+uso una vez no haya archivos `.php` en el document root.
+
 ## Correr localmente
 
 ```bash
