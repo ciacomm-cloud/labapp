@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=/home/caladiorosevelvet/labapp/backend
-ExecStart=/home/caladiorosevelvet/labapp/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8766 --workers 2
+WorkingDirectory=/home/castamay-labapp/labapp/backend
+ExecStart=/home/castamay-labapp/labapp/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8766 --workers 2
 Restart=on-failure
 RestartSec=3
 

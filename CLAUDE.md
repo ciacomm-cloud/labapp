@@ -71,38 +71,54 @@ labapp/
 
 ## Despliegue en producción (labapp.castamay.com)
 
-**Arquitectura elegida: código y proceso corren bajo el usuario `caladiorosevelvet`
-(no bajo `castamay-labapp`), nginx hace reverse proxy hacia el backend.**
+**Arquitectura actual (desde 2026-07-25): código y proceso corren nativamente
+bajo el usuario `castamay-labapp`** — el dueño real del vhost/document root
+de `labapp.castamay.com` en CloudPanel. nginx sigue haciendo reverse proxy
+hacia el backend (uvicorn en loopback), igual que antes.
 
-Motivo — restricciones reales de permisos verificadas en el servidor:
+**Por qué el cambio:** la Fase 1 se desplegó originalmente bajo el usuario
+`caladiorosevelvet` (ver historial más abajo) porque esa era la sesión
+disponible en ese momento y no había forma de operar como `castamay-labapp`
+desde ahí (sin `su`/`sudo -u`). En una sesión posterior sí hubo login directo
+como `castamay-labapp`, y se migró para que el sitio corra bajo su propio
+usuario — aislamiento por sitio, un usuario del sistema por dominio, mismo
+patrón ya usado en el resto de los proyectos de este servidor (p. ej.
+`lab.castamay.com` bajo `castamay-lab`, puerto 8765). Corregir esto evita que
+un sitio dependa del ciclo de vida de la cuenta de otro.
 
-- `castamay-labapp` es un usuario de sistema propio de CloudPanel (dueño del
-  vhost/document root de `labapp.castamay.com`). No hay forma de operar como
-  ese usuario: no hay `su`/`sudo -u castamay-labapp` disponible (el único
-  `sudo` habilitado es `clpctlWrapper`, limitado a
-  `db:export/import`, `system:permissions:reset`, `varnish-cache:purge`).
-  Mover el código físicamente a su `htdocs/` no resuelve esto — el proceso
-  seguiría corriendo con el usuario que lo lanza, no con el dueño del
-  directorio.
-- No hay acceso de lectura/escritura a `/etc/nginx/*` (vhosts, sites-enabled).
-  Cualquier cambio a la config de nginx del sitio requiere el panel de
-  CloudPanel (rol admin) o acceso root directo — fuera del alcance de este
-  entorno.
-- Sí hay: (a) permiso de escritura de grupo sobre
+Restricciones de permisos verificadas que siguen aplicando (independientes
+del usuario):
+
+- No hay acceso de lectura/escritura a `/etc/nginx/*` (vhosts, sites-enabled)
+  desde ningún usuario de aplicación. Cambios al vhost requieren el panel de
+  CloudPanel (rol admin) o acceso root directo.
+- Un usuario del sistema no puede controlar el `systemctl --user` /
+  `loginctl` de otro (D-Bus de sesión separado) — el cutover entre usuarios
+  requiere que cada lado detenga/arranque su propio servicio.
+- Sí hay: permiso de escritura de grupo sobre
   `/home/castamay-labapp/htdocs/labapp.castamay.com/` (para depositar el
-  build estático del frontend cuando exista), y (b) systemd de usuario
-  (`systemctl --user`) + `linger` habilitado para `caladiorosevelvet`, igual
-  que el patrón ya usado por `lab.castamay.com` (usuario `castamay-lab`,
-  puerto 8765) — mismo mecanismo, distinto usuario.
+  build estático del frontend cuando exista).
 
-**Backend (ya desplegado):**
+**Backend (desplegado bajo `castamay-labapp`):**
 
+- Código en `/home/castamay-labapp/labapp/` (fuera de `htdocs/`, que es solo
+  para el build estático del frontend).
 - Unidad systemd de usuario: `~/.config/systemd/user/labapp-api.service`
   (copia versionada en `deploy/labapp-api.service`).
 - Corre `uvicorn app.main:app --host 127.0.0.1 --port 8766 --workers 2`.
 - `systemctl --user enable --now labapp-api.service` + `loginctl enable-linger
-  caladiorosevelvet` → sobrevive reinicios y logout.
-- Verificado: `curl http://127.0.0.1:8766/api/health` → `{"status":"ok"}`.
+  castamay-labapp` → sobrevive reinicios y logout.
+- DB sin cambios: mismo MySQL `applab`/usuario `labapp`, mismas migraciones
+  Alembic ya aplicadas (`alembic current` == head, no se re-corrieron).
+- Verificado end-to-end vía `https://labapp.castamay.com`: `/api/health` →
+  `{"status":"ok"}`, login (`/api/auth/login`) → JWT válido.
+
+**Historial — despliegue original bajo `caladiorosevelvet` (Fase 1, ya dado
+de baja):** código y proceso corrían bajo `caladiorosevelvet` porque esa era
+la única sesión disponible en el momento del despliegue inicial y no había
+forma de operar como `castamay-labapp` desde ahí. Mismo puerto (8766), mismo
+mecanismo (`systemctl --user` + `linger`). Reemplazado por el despliegue
+nativo descrito arriba.
 
 **Frontend (pendiente — fase 7 del plan):** una vez exista el build de
 Vite/React (`npm run build` → `dist/`), se copia el contenido de `dist/` a
@@ -153,14 +169,18 @@ uvicorn app.main:app --reload --port 8001
 ## Plan de fases (spec original)
 
 1. ✅ Estructura del proyecto + migraciones de las 4 tablas de inventario + modelo de usuarios.
-2. Reglas de negocio de captura (`inventory_rules.py`): validación de
-   `discard_reason` obligatorio si `discarded_jars > 0`, saldos no negativos.
-3. Métricas derivadas (`inventory_metrics.py`): `dias_transcurridos`,
-   `semaforo_antiguedad` (verde ≤25, amarillo ≤35, rojo >35),
+2. ✅ (2026-07-25) Reglas de negocio de captura (`app/services/inventory_rules.py`):
+   `validate_log_balances()` — `discard_reason` obligatorio si `discarded_jars > 0`,
+   saldos no negativos.
+3. ✅ (2026-07-25) Métricas derivadas (`app/services/inventory_metrics.py`):
+   `dias_transcurridos`, `semaforo_antiguedad` (verde ≤25, amarillo ≤35, rojo >35),
    `estado_critico` (normal ≤1 y hay frascos en rescate). Nunca se
-   guardan como columnas — se calculan al vuelo en el response.
-4. Endpoints CRUD de taxonomía (`/api/inventario/genera`, `/species`) y
-   catálogo (`/catalog-items`), solo admin para escritura.
+   guardan como columnas — se calculan al vuelo vía `compute_log_metrics()`.
+4. ✅ (2026-07-25) Endpoints CRUD de taxonomía (`app/routers/inventario.py` —
+   `/api/inventario/genera`, `/api/inventario/species`) y catálogo
+   (`app/routers/catalog.py` — `/api/catalog-items`). Lectura para `admin`/`tech`
+   (`require_any_role`), escritura solo `admin` (`require_admin`). Probado
+   end-to-end contra la DB real (crear/listar/duplicado 409/FK inexistente 404/borrar).
 5. Endpoint de captura semanal (`POST /catalog-items/{id}/logs`) — técnico
    y admin pueden crear, solo admin puede corregir logs pasados.
 6. Endpoints de dashboard: `/dashboard/summary`, `/dashboard/urgentes`,
