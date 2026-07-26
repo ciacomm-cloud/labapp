@@ -11,7 +11,8 @@ de este repo.
   tiene MySQL disponible). Driver `PyMySQL`.
 - **Auth:** JWT propio (PyJWT) + `passlib[bcrypt]` para hashing. Construido
   desde cero para este proyecto — no reutiliza nada de otros sistemas.
-- **Frontend:** Vite/React SPA (aún no iniciado — fase posterior del plan).
+- **Frontend:** Vite + React + TypeScript + Tailwind CSS v4 (`@tailwindcss/vite`),
+  React Router v7. SPA cliente-only, sin SSR/RSC.
 
 ## Decisiones técnicas tomadas
 
@@ -35,13 +36,32 @@ de este repo.
 6. **Usuarios:** tabla `users` propia con `role` enum (`admin` | `tech`).
    No hay roles adicionales todavía.
 
-## Gotcha conocido: `passlib` + `bcrypt`
+## Gotchas conocidos
 
-`passlib==1.7.4` es incompatible con `bcrypt>=4.1` (rompe el backend con
-`AttributeError: module 'bcrypt' has no attribute '__about__'` y luego
-`ValueError: password cannot be longer than 72 bytes`). Fijado a
-`bcrypt==4.0.1` en `requirements.txt`. Si se actualiza `passlib`, revisar si
-ya soporta bcrypt 4.1+/5.x antes de destapar el pin.
+**`passlib` + `bcrypt`:** `passlib==1.7.4` es incompatible con `bcrypt>=4.1`
+(rompe el backend con `AttributeError: module 'bcrypt' has no attribute
+'__about__'` y luego `ValueError: password cannot be longer than 72 bytes`).
+Fijado a `bcrypt==4.0.1` en `requirements.txt`. Si se actualiza `passlib`,
+revisar si ya soporta bcrypt 4.1+/5.x antes de destapar el pin.
+
+**`react-router` advisory sin patch disponible:** `npm audit` reporta un
+"High" (RSC Mode CSRF Bypass, GHSA-qwww-vcr4-c8h2) en el rango
+`7.12.0-8.2.0` — cubre la última versión estable (`7.18.1`, la que usamos).
+Es específico de **RSC Mode** (React Server Components / server actions);
+esta app es una SPA cliente-only con `BrowserRouter`, no usa RSC ni loaders
+de servidor, así que no aplica. No degradar la versión para "resolverlo":
+versiones anteriores (probado `7.11.0`) tienen un historial mucho más largo
+de CVEs reales (XSS, RCE, open redirect) que sí aplicarían. Mantener en la
+última estable.
+
+**Fechas del frontend: usar hora local, no UTC.** `new Date().toISOString()`
+da la fecha en UTC, y el servidor corre en CST (UTC-6) — usar
+`toISOString().slice(0,10)` para "hoy" hace que la captura registre un día
+adelante del servidor durante buena parte del día, y el backend calculaba
+`dias_transcurridos` en negativo. Se encontró probando la app real en
+navegador (Playwright), no por `tsc`/build. Fix: `src/lib/dates.ts` usa
+`getFullYear()/getMonth()/getDate()` (hora local) en vez de `toISOString()`.
+Cualquier fecha "hoy" nueva en el frontend debe pasar por ese helper.
 
 ## Estructura
 
@@ -52,20 +72,43 @@ labapp/
 │   │   ├── main.py            # FastAPI app, CORS, routers
 │   │   ├── config.py          # Settings desde .env (pydantic-settings)
 │   │   ├── database.py        # engine, SessionLocal, Base, get_db
-│   │   ├── deps.py            # get_current_user, require_role, require_admin
+│   │   ├── deps.py            # get_current_user, require_role, require_admin, require_any_role
 │   │   ├── models/
 │   │   │   ├── user.py        # User, UserRole
 │   │   │   └── inventario.py  # Genus, Species, CatalogItem, InventoryLog, DiscardReason
 │   │   ├── schemas/
-│   │   │   └── user.py        # UserCreate, UserOut, Token
+│   │   │   ├── user.py        # UserCreate, UserOut, Token
+│   │   │   ├── inventario.py  # Genus/Species/CatalogItem Create/Update/Out
+│   │   │   ├── inventory_log.py  # InventoryLogCreate/Update/Out
+│   │   │   └── dashboard.py   # DashboardSummaryOut, DashboardUrgenteOut
 │   │   ├── routers/
-│   │   │   └── auth.py        # /api/auth/login, /me, /users (admin)
+│   │   │   ├── auth.py        # /api/auth/login, /me, /users (admin)
+│   │   │   ├── inventario.py  # /api/inventario/genera, /species
+│   │   │   ├── catalog.py     # /api/catalog-items (+ /{id}/logs)
+│   │   │   └── dashboard.py   # /api/dashboard/summary, /urgentes, /export
 │   │   └── services/
-│   │       └── auth.py        # hash_password, verify_password, JWT
+│   │       ├── auth.py               # hash_password, verify_password, JWT
+│   │       ├── inventory_rules.py    # validate_log_balances
+│   │       └── inventory_metrics.py  # compute_log_metrics
 │   ├── alembic/                # migraciones versionadas
 │   ├── requirements.txt
 │   ├── .env                    # NO commiteado — credenciales reales
 │   └── .env.example
+├── frontend/                    # Vite + React + TS + Tailwind v4
+│   ├── src/
+│   │   ├── lib/
+│   │   │   ├── api.ts          # fetch wrapper, JWT, login(), downloadExport()
+│   │   │   ├── types.ts        # tipos espejo de los schemas del backend
+│   │   │   └── dates.ts        # fechas en hora local (ver gotcha arriba)
+│   │   ├── auth/AuthContext.tsx
+│   │   ├── components/         # Layout (tabs por rol), ProtectedRoute, SemaforoBadge
+│   │   └── pages/
+│   │       ├── LoginPage.tsx
+│   │       ├── CapturaPage.tsx     # tech + admin
+│   │       ├── DashboardPage.tsx   # admin only
+│   │       ├── CatalogoPage.tsx    # admin only, tabs Géneros/Especies/Catálogo
+│   │       └── catalogo/           # GeneraSection, SpeciesSection, CatalogSection
+│   └── dist/                    # build de producción (gitignored)
 └── CLAUDE.md
 ```
 
@@ -120,18 +163,34 @@ forma de operar como `castamay-labapp` desde ahí. Mismo puerto (8766), mismo
 mecanismo (`systemctl --user` + `linger`). Reemplazado por el despliegue
 nativo descrito arriba.
 
-**Frontend (pendiente — fase 7 del plan):** una vez exista el build de
-Vite/React (`npm run build` → `dist/`), se copia el contenido de `dist/` a
-`/home/castamay-labapp/htdocs/labapp.castamay.com/` (permiso de grupo ya
-verificado), reemplazando el placeholder `index.php` actual.
+**Frontend (2026-07-25 — build desplegado, falta el cutover de nginx):** el
+build de Vite/React (`npm run build` → `dist/`) ya se copió a
+`/home/castamay-labapp/htdocs/labapp.castamay.com/`, reemplazando el
+placeholder `index.php` (backup en
+`deploy/htdocs-placeholder-backup/index.php.bak`). Verificado en producción:
+
+- `https://labapp.castamay.com/` → 200, sirve el `index.html` nuevo del SPA.
+- `https://labapp.castamay.com/assets/*.js` → 200 (los assets estáticos se
+  sirven bien, coincidencia exacta de archivo).
+- `https://labapp.castamay.com/api/health` → 200 `{"status":"ok"}` — el
+  reverse proxy `/api/` **ya estaba configurado** desde el despliegue del
+  backend (Fase 1), no era necesario tocarlo de nuevo.
+- `https://labapp.castamay.com/captura` (o cualquier ruta profunda del SPA
+  cargada directo/refrescada, no navegada desde dentro de la app) → **404**.
+  Es exactamente el punto 2 de abajo, todavía pendiente: sin el
+  `try_files ... /index.html;`, nginx no tiene fallback para rutas que no son
+  un archivo real. La navegación interna (React Router, sin recargar) sí
+  funciona porque nunca toca al servidor.
 
 **Acción pendiente que requiere al admin de CloudPanel (no ejecutable desde
 este entorno):** editar el Vhost de `labapp.castamay.com` en el panel para:
 
-1. Agregar un `location /api/` con reverse proxy a `127.0.0.1:8766`.
-2. Cuando el frontend esté listo, cambiar `location /` para servir estático
-   con `try_files $uri $uri/ /index.html;` y remover el bloque
-   `location ~ \.php$` (ya no hay PHP que ejecutar).
+1. ~~Agregar un `location /api/` con reverse proxy a `127.0.0.1:8766`~~ — ya
+   hecho, verificado arriba.
+2. Cambiar `location /` para servir estático con
+   `try_files $uri $uri/ /index.html;` y remover el bloque
+   `location ~ \.php$` (ya no hay PHP que ejecutar). **Sin este paso, cargar o
+   refrescar cualquier ruta del SPA que no sea `/` da 404.**
 
 Snippet sugerido para pegar en el editor de Vhost de CloudPanel:
 
@@ -164,6 +223,12 @@ pip install -r requirements.txt
 cp .env.example .env   # y llenar DATABASE_URL / SECRET_KEY reales
 alembic upgrade head
 uvicorn app.main:app --reload --port 8001
+```
+
+```bash
+cd frontend
+npm install
+npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
 ```
 
 ## Plan de fases (spec original)
@@ -214,8 +279,30 @@ uvicorn app.main:app --reload --port 8001
    de totales/merma verificado con datos conocidos, orden de urgentes,
    contenido de CSV y XLSX (parseado de vuelta con `openpyxl`), `formato`
    inválido → 422.
-7. Frontend: tab "Inventarios" — primero vista de captura (técnico),
-   después dashboard (admin).
+7. ✅ (2026-07-25) Frontend (Vite + React + TS + Tailwind v4, React Router):
+   - `LoginPage` — JWT vía `/api/auth/login` (form-urlencoded, no JSON).
+   - `CapturaPage` (`admin`/`tech`) — buscar catálogo, formulario de captura,
+     confirmación con métricas al vuelo (semáforo/estado crítico).
+   - `DashboardPage` (admin only) — stat cards, tabla de urgentes, export
+     CSV/XLSX con selector de periodo.
+   - `CatalogoPage` (admin only) — CRUD de géneros/especies/catálogo en tabs;
+     no estaba en el plan original pero sin esto no había forma de crear
+     nada que capturar, así que se agregó a esta fase.
+   - `Layout` muestra/oculta tabs Dashboard y Catálogo según `user.role`;
+     `ProtectedRoute` además bloquea acceso directo por URL.
+   Probado end-to-end **en navegador real** (Playwright headless, ver gotcha
+   de fechas arriba — así se encontró el bug de UTC/hora local): login admin
+   y tech con usuarios de prueba temporales (creados y borrados vía DB, no
+   se tocó el usuario admin real), CRUD completo de género → especie →
+   catálogo desde la UI, captura semanal con confirmación correcta, dashboard
+   con summary + urgentes reflejando el dato recién capturado, export CSV y
+   XLSX descargados y verificados (contenido correcto), tabs Dashboard/Catálogo
+   ausentes para `tech` y redirección al navegar esas rutas por URL directa,
+   cero errores de consola. Sin residuos de datos de prueba.
+   **Deploy:** build copiado a
+   `/home/castamay-labapp/htdocs/labapp.castamay.com/` (ver sección de
+   despliegue arriba) — funcional en `/`, pendiente el `try_files` de nginx
+   para rutas profundas.
 8. Seed de géneros/especies/catálogos existentes desde la hoja de cálculo
    actual, para no perder folios (`# Catálogo`) ya asignados.
 
