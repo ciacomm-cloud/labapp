@@ -41,12 +41,24 @@ def _latest_log_alias():
 def dashboard_summary(
     desde: date | None = None,
     hasta: date | None = None,
+    genus_id: int | None = None,
+    species_id: int | None = None,
     db: Session = Depends(get_db),
 ):
     desde, hasta = _default_period(desde, hasta)
 
     LatestLog, subq = _latest_log_alias()
-    latest_logs = db.query(LatestLog).filter(subq.c.rn == 1).all()
+    latest_q = (
+        db.query(LatestLog)
+        .join(CatalogItem, CatalogItem.id == LatestLog.catalog_item_id)
+        .join(Species, Species.id == CatalogItem.species_id)
+        .filter(subq.c.rn == 1)
+    )
+    if genus_id is not None:
+        latest_q = latest_q.filter(Species.genus_id == genus_id)
+    if species_id is not None:
+        latest_q = latest_q.filter(CatalogItem.species_id == species_id)
+    latest_logs = latest_q.all()
     total_frascos_laboratorio = sum(
         l.normal_jars + l.ready_jars + l.rescue_1_jars + l.rescue_2_jars
         for l in latest_logs
@@ -55,14 +67,20 @@ def dashboard_summary(
         l.rescue_1_jars + l.rescue_2_jars for l in latest_logs
     )
 
-    period_logs = (
+    period_q = (
         db.query(InventoryLog)
+        .join(CatalogItem, CatalogItem.id == InventoryLog.catalog_item_id)
+        .join(Species, Species.id == CatalogItem.species_id)
         .filter(
             InventoryLog.last_subculture_date >= desde,
             InventoryLog.last_subculture_date <= hasta,
         )
-        .all()
     )
+    if genus_id is not None:
+        period_q = period_q.filter(Species.genus_id == genus_id)
+    if species_id is not None:
+        period_q = period_q.filter(CatalogItem.species_id == species_id)
+    period_logs = period_q.all()
     total_registrado = sum(
         l.normal_jars + l.ready_jars + l.rescue_1_jars + l.rescue_2_jars + l.discarded_jars
         for l in period_logs
@@ -83,17 +101,24 @@ def dashboard_summary(
 
 
 @router.get("/urgentes", response_model=list[DashboardUrgenteOut])
-def dashboard_urgentes(db: Session = Depends(get_db)):
+def dashboard_urgentes(
+    genus_id: int | None = None,
+    species_id: int | None = None,
+    db: Session = Depends(get_db),
+):
     LatestLog, subq = _latest_log_alias()
-    rows = (
+    q = (
         db.query(LatestLog, CatalogItem, Species, Genus)
         .join(CatalogItem, CatalogItem.id == LatestLog.catalog_item_id)
         .join(Species, Species.id == CatalogItem.species_id)
         .join(Genus, Genus.id == Species.genus_id)
         .filter(subq.c.rn == 1)
-        .order_by(LatestLog.last_subculture_date.asc())
-        .all()
     )
+    if genus_id is not None:
+        q = q.filter(Genus.id == genus_id)
+    if species_id is not None:
+        q = q.filter(Species.id == species_id)
+    rows = q.order_by(LatestLog.last_subculture_date.asc()).all()
 
     result = []
     for log, item, species, genus in rows:

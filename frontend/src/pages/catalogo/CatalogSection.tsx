@@ -1,8 +1,23 @@
 import { useState } from 'react'
 import { api, ApiError } from '../../lib/api'
 import type { CatalogItemOut, SpeciesOut } from '../../lib/types'
+import { SortableTh } from '../../components/SortableTh'
+import { useSort } from '../../lib/useSort'
 
 const emptyForm = { catalog_code: '', species_id: '', status: 'active' }
+
+type LoteSortKey = 'catalog_code' | 'especie' | 'status'
+
+function loteSortValue(item: CatalogItemOut, key: LoteSortKey): string | number {
+  switch (key) {
+    case 'catalog_code':
+      return item.catalog_code
+    case 'especie':
+      return `${item.species.genus.name} ${item.species.name}`
+    case 'status':
+      return item.status
+  }
+}
 
 export function CatalogSection({
   items,
@@ -17,6 +32,7 @@ export function CatalogSection({
   const [editingId, setEditingId] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const { sorted, sortKey, direction, toggle } = useSort<CatalogItemOut, LoteSortKey>(items, loteSortValue)
 
   const resetForm = () => {
     setForm(emptyForm)
@@ -121,14 +137,14 @@ export function CatalogSection({
           <table className="min-w-full divide-y divide-stone-200 text-sm">
             <thead className="bg-stone-50 text-left text-stone-500">
               <tr>
-                <th className="px-3 py-2">Folio</th>
-                <th className="px-3 py-2">Especie</th>
-                <th className="px-3 py-2">Estado</th>
+                <SortableTh label="Folio" sortKeyName="catalog_code" activeKey={sortKey} direction={direction} onClick={toggle} />
+                <SortableTh label="Especie" sortKeyName="especie" activeKey={sortKey} direction={direction} onClick={toggle} />
+                <SortableTh label="Estado" sortKeyName="status" activeKey={sortKey} direction={direction} onClick={toggle} />
                 <th className="px-3 py-2"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-100">
-              {items.map((it) => (
+              {sorted.map((it) => (
                 <tr key={it.id}>
                   <td className="px-3 py-2 font-medium text-stone-900">{it.catalog_code}</td>
                   <td className="px-3 py-2 text-stone-600">
@@ -151,7 +167,7 @@ export function CatalogSection({
                   </td>
                 </tr>
               ))}
-              {items.length === 0 && (
+              {sorted.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-3 py-6 text-center text-stone-400">
                     Sin lotes

@@ -353,6 +353,34 @@ npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
     real contra producción: logo del header carga, textos renombrados
     correctos en las tres pantallas, flujo completo crear→editar→borrar un
     lote de prueba, sin residuos de datos ni errores de consola.
+12. ✅ (2026-07-25) Filtro por género/especie en el Dashboard + ordenamiento
+    por columna en las tablas de Urgentes y Lotes.
+    - Backend (`app/routers/dashboard.py`): `GET /api/dashboard/summary` y
+      `GET /api/dashboard/urgentes` aceptan `genus_id`/`species_id`
+      opcionales — el filtrado es en SQL (join a `CatalogItem`/`Species`),
+      no se trae todo y se filtra en Python. `summary` combina el filtro con
+      `desde`/`hasta` ya existente (aplica a las 4 tarjetas Y al cálculo de
+      `% merma`); `urgentes` no tenía ni necesita rango de fechas (siempre
+      es snapshot del log más reciente), solo el filtro de género/especie.
+    - Frontend (`DashboardPage.tsx`): selects de Género/Especie junto a
+      Desde/Hasta; el de Especie se filtra en memoria según el género
+      elegido (mismo patrón que el formulario de creación de especie). Un
+      solo botón "Aplicar filtros" recarga `summary` y `urgentes` juntos.
+    - Ordenamiento (`lib/useSort.ts` + `components/SortableTh.tsx`,
+      reutilizados en `DashboardPage` y `CatalogSection`): 100% en frontend,
+      sobre el array ya cargado — a propósito, sin tocar el backend, porque
+      son listados chicos (no miles de filas). Click en header ordena asc,
+      segundo click invierte a desc, flecha ▲/▼ indica columna y dirección
+      activa. Fechas ISO (`YYYY-MM-DD`) ordenan bien con comparación de
+      string simple, sin parseo especial.
+    Probado end-to-end en navegador real contra producción con dos lotes de
+    prueba en géneros distintos y valores conocidos: el dropdown de especie
+    se limita al género elegido, aplicar el filtro reduce exactamente
+    tarjetas y tabla al género filtrado (verificado con la suma exacta de
+    frascos), quitar el filtro restaura todo, ordenamiento asc/desc
+    correcto por Folio (alfabético), Normales (numérico) y Última resiembra
+    (cronológico) en Urgentes, y por Folio en Lotes. Sin residuos de datos
+    ni errores de consola.
 
 ## Roles
 
