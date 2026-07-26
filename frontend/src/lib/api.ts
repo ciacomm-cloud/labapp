@@ -35,7 +35,10 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(path, { ...options, headers })
 
-  if (res.status === 401) {
+  // 401 solo significa "tu sesión expiró" si la request llevaba un token
+  // nuestro (Authorization: Bearer). El propio POST /api/auth/login nunca
+  // lleva token y su 401 es "credenciales incorrectas", no una sesión vencida.
+  if (res.status === 401 && token) {
     clearToken()
     onUnauthorized?.()
     throw new ApiError(401, 'Sesión expirada, vuelve a iniciar sesión')

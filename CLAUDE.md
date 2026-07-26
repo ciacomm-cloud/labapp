@@ -63,6 +63,23 @@ navegador (Playwright), no por `tsc`/build. Fix: `src/lib/dates.ts` usa
 `getFullYear()/getMonth()/getDate()` (hora local) en vez de `toISOString()`.
 Cualquier fecha "hoy" nueva en el frontend debe pasar por ese helper.
 
+**Un 401 no siempre significa "sesión expirada".** `lib/api.ts` interceptaba
+*cualquier* respuesta 401 (de cualquier endpoint) como "tu sesión expiró" y
+mostraba ese mensaje genérico — incluyendo el propio `POST /api/auth/login`
+cuando rechaza credenciales incorrectas. Resultado: un login fallido (usuario
+o password mal) mostraba "Sesión expirada, vuelve a iniciar sesión" en vez
+del detalle real del backend ("Usuario o contraseña incorrectos"), incluso
+en la primerísima visita sin sesión previa — confuso porque nunca hubo
+sesión que expirar. Reportado en producción 2026-07-25, reproducido con
+Playwright en contexto de navegador limpio (sin storage previo) contra
+`https://labapp.castamay.com`. Fix: el branch de "limpiar token + notificar
+sesión expirada" en `request()` ahora solo se dispara si la request llevaba
+un `Authorization: Bearer` nuestro (`res.status === 401 && token`) — el login
+nunca manda ese header, así que su 401 cae al manejo genérico de errores y
+muestra el `detail` real del backend. Verificado que el caso legítimo (token
+inválido/vencido guardado) sigue limpiando el token correctamente al perder
+una request autenticada.
+
 ## Estructura
 
 ```
