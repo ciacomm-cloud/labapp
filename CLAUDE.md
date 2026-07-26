@@ -180,56 +180,35 @@ forma de operar como `castamay-labapp` desde ahí. Mismo puerto (8766), mismo
 mecanismo (`systemctl --user` + `linger`). Reemplazado por el despliegue
 nativo descrito arriba.
 
-**Frontend (2026-07-25 — build desplegado, falta el cutover de nginx):** el
-build de Vite/React (`npm run build` → `dist/`) ya se copió a
+**Frontend (2026-07-25 — desplegado y funcional de punta a punta):** el
+build de Vite/React (`npm run build` → `dist/`) está en
 `/home/castamay-labapp/htdocs/labapp.castamay.com/`, reemplazando el
 placeholder `index.php` (backup en
-`deploy/htdocs-placeholder-backup/index.php.bak`). Verificado en producción:
+`deploy/htdocs-placeholder-backup/index.php.bak`). El admin de CloudPanel
+editó el Vhost del server de `443` (el que atendía `labapp.castamay.com`
+directo, no el segundo server de `8080`/PHP-FPM, que quedó sin tocar):
 
-- `https://labapp.castamay.com/` → 200, sirve el `index.html` nuevo del SPA.
-- `https://labapp.castamay.com/assets/*.js` → 200 (los assets estáticos se
-  sirven bien, coincidencia exacta de archivo).
-- `https://labapp.castamay.com/api/health` → 200 `{"status":"ok"}` — el
-  reverse proxy `/api/` **ya estaba configurado** desde el despliegue del
-  backend (Fase 1), no era necesario tocarlo de nuevo.
-- `https://labapp.castamay.com/captura` (o cualquier ruta profunda del SPA
-  cargada directo/refrescada, no navegada desde dentro de la app) → **404**.
-  Es exactamente el punto 2 de abajo, todavía pendiente: sin el
-  `try_files ... /index.html;`, nginx no tiene fallback para rutas que no son
-  un archivo real. La navegación interna (React Router, sin recargar) sí
-  funciona porque nunca toca al servidor.
+1. `location /api/` con reverse proxy a `127.0.0.1:8766` — ya existía desde
+   el despliegue del backend (Fase 1).
+2. `location /` — reemplazó el proxy a Varnish completo por
+   `try_files $uri $uri/ /index.html;`, dejando que React Router maneje el
+   ruteo del lado del cliente.
+3. Quitó el `if (-f $request_filename) { break; }` al final del bloque
+   `server` — residuo del patrón viejo de Varnish/PHP, innecesario y
+   potencialmente conflictivo con `try_files`.
 
-**Acción pendiente que requiere al admin de CloudPanel (no ejecutable desde
-este entorno):** editar el Vhost de `labapp.castamay.com` en el panel para:
+Verificado en producción (`curl` + Playwright en navegador real, contexto
+limpio):
 
-1. ~~Agregar un `location /api/` con reverse proxy a `127.0.0.1:8766`~~ — ya
-   hecho, verificado arriba.
-2. Cambiar `location /` para servir estático con
-   `try_files $uri $uri/ /index.html;` y remover el bloque
-   `location ~ \.php$` (ya no hay PHP que ejecutar). **Sin este paso, cargar o
-   refrescar cualquier ruta del SPA que no sea `/` da 404.**
-
-Snippet sugerido para pegar en el editor de Vhost de CloudPanel:
-
-```nginx
-location /api/ {
-    proxy_pass http://127.0.0.1:8766;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-}
-
-# Cuando exista el build del frontend, reemplazar el location / por:
-# location / {
-#     try_files $uri $uri/ /index.html;
-# }
-```
-
-No se requiere recrear el site ni cambiar su "tipo" en CloudPanel — basta con
-este snippet en el Vhost existente; el `location ~ \.php$` puede quedar sin
-uso una vez no haya archivos `.php` en el document root.
+- `/`, `/dashboard`, `/captura`, `/catalogo`, `/login` y una ruta inventada
+  → todas 200, sirven el `index.html` del SPA.
+- Sin sesión, entrar directo a `/dashboard` redirige (client-side) a
+  `/login`.
+- Con sesión, cargar `/dashboard` o `/catalogo` **directo** (no navegado
+  desde dentro de la app — simula bookmark o F5) renderiza el contenido
+  real, no solo el shell vacío.
+- `/api/health` y los assets estáticos siguen 200, sin regresión.
+- Cero errores de consola en ninguno de los casos.
 
 ## Correr localmente
 
@@ -318,8 +297,9 @@ npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
    cero errores de consola. Sin residuos de datos de prueba.
    **Deploy:** build copiado a
    `/home/castamay-labapp/htdocs/labapp.castamay.com/` (ver sección de
-   despliegue arriba) — funcional en `/`, pendiente el `try_files` de nginx
-   para rutas profundas.
+   despliegue arriba) — funcional de punta a punta en producción, incluyendo
+   rutas profundas, desde que el admin de CloudPanel aplicó el `try_files`
+   en el vhost (2026-07-25).
 8. Seed de géneros/especies/catálogos existentes desde la hoja de cálculo
    actual, para no perder folios (`# Catálogo`) ya asignados.
 
