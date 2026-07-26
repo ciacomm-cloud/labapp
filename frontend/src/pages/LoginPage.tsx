@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { Navigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { ApiError } from '../lib/api'
+import logo from '../assets/logolabapp.jpg'
 
 export function LoginPage() {
   const { user, login } = useAuth()
@@ -31,8 +32,7 @@ export function LoginPage() {
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-lg border border-stone-200 bg-white p-6 shadow-sm"
       >
-        <h1 className="mb-1 text-xl font-semibold text-stone-900">labapp</h1>
-        <p className="mb-6 text-sm text-stone-500">Inventario de micropropagación</p>
+        <img src={logo} alt="labapp — Sistema de Control Laboratorio" className="mx-auto mb-6 h-auto w-56 object-contain" />
 
         <label className="mb-1 block text-sm font-medium text-stone-700">Usuario</label>
         <input

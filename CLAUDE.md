@@ -327,6 +327,15 @@ npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
    viejo. Recordatorio: todo cambio de backend requiere
    `systemctl --user restart labapp-api.service` antes de probar en
    producción, no solo redeploy del frontend.
+10. ✅ (2026-07-25) Logo real en el login. Se subió manualmente
+    `logolabapp.jpg` a `htdocs/` (fuera del control de versiones); se copió
+    a `frontend/src/assets/logolabapp.jpg` (ahora versionado, sobrevive a
+    `npm run build`) y se referencia como `import` en `LoginPage.tsx`
+    reemplazando el texto "labapp" — `w-56` centrado, mantiene proporción
+    nativa (800×336). El archivo suelto en la raíz de `htdocs/` se borró
+    una vez integrado al build (queda solo dentro de `assets/` con el hash
+    de Vite). Verificado en producción con Playwright: la imagen carga
+    (200, `naturalWidth` > 0), sin distorsión, sin errores de consola.
 
 ## Roles
 
