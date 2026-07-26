@@ -6,6 +6,7 @@ import { LoginPage } from './pages/LoginPage'
 import { CapturaPage } from './pages/CapturaPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { CatalogoPage } from './pages/CatalogoPage'
+import { UsersPage } from './pages/UsersPage'
 
 function AuthedLayout({ children }: { children: React.ReactNode }) {
   return <Layout>{children}</Layout>
@@ -45,6 +46,16 @@ function App() {
           <ProtectedRoute roles={['admin']}>
             <AuthedLayout>
               <CatalogoPage />
+            </AuthedLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/usuarios"
+        element={
+          <ProtectedRoute roles={['admin']}>
+            <AuthedLayout>
+              <UsersPage />
             </AuthedLayout>
           </ProtectedRoute>
         }

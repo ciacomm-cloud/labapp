@@ -30,6 +30,7 @@ export function Layout({ children }: { children: ReactNode }) {
               <Tab to="/captura">Captura</Tab>
               {user?.role === 'admin' && <Tab to="/dashboard">Dashboard</Tab>}
               {user?.role === 'admin' && <Tab to="/catalogo">Catálogo</Tab>}
+              {user?.role === 'admin' && <Tab to="/usuarios">Usuarios</Tab>}
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-stone-600">

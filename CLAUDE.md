@@ -124,7 +124,8 @@ labapp/
 │   │       ├── CapturaPage.tsx     # tech + admin
 │   │       ├── DashboardPage.tsx   # admin only
 │   │       ├── CatalogoPage.tsx    # admin only, tabs Géneros/Especies/Catálogo
-│   │       └── catalogo/           # GeneraSection, SpeciesSection, CatalogSection
+│   │       ├── catalogo/           # GeneraSection, SpeciesSection, CatalogSection
+│   │       └── UsersPage.tsx       # admin only, CRUD de usuarios
 │   └── dist/                    # build de producción (gitignored)
 └── CLAUDE.md
 ```
@@ -302,6 +303,30 @@ npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
    en el vhost (2026-07-25).
 8. Seed de géneros/especies/catálogos existentes desde la hoja de cálculo
    actual, para no perder folios (`# Catálogo`) ya asignados.
+9. ✅ (2026-07-25) CRUD de usuarios — no estaba en el plan de fases original
+   (la tabla de Roles siempre dijo que `admin` podía hacer "CRUD de
+   usuarios", pero solo existían `POST`/`GET /api/auth/users`; sin editar ni
+   borrar). Agregado a pedido:
+   - Backend (`app/routers/auth.py`): `PUT /api/auth/users/{id}` (nombre,
+     rol, activo/inactivo, reset de password opcional) y
+     `DELETE /api/auth/users/{id}`, ambos `require_admin`.
+   - Guardas de seguridad: un admin no puede quitarse su propio rol de admin
+     ni desactivar su propia cuenta, no puede borrarse a sí mismo, y no se
+     puede degradar/borrar al último administrador que queda en el sistema
+     (`_other_admins_count`).
+   - Frontend: tab "Usuarios" nueva (admin only) — mismo patrón que
+     Catálogo. La UI deshabilita rol/activo/borrar sobre la fila del propio
+     usuario logueado (refuerza del lado del cliente lo que el backend ya
+     exige).
+   Probado end-to-end en navegador real contra producción: crear, editar
+   (nombre + desactivar), reset de password verificado con login real,
+   protecciones de auto-modificación confirmadas en la UI, borrar, logout.
+   **Gotcha propio:** se me olvidó reiniciar `labapp-api.service` después de
+   agregar las rutas nuevas — la primera corrida del test dio 404 genérico
+   de FastAPI en el `PUT` porque el proceso vivo seguía corriendo el código
+   viejo. Recordatorio: todo cambio de backend requiere
+   `systemctl --user restart labapp-api.service` antes de probar en
+   producción, no solo redeploy del frontend.
 
 ## Roles
 

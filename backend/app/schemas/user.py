@@ -10,6 +10,13 @@ class UserCreate(BaseModel):
     role: UserRole = UserRole.tech
 
 
+class UserUpdate(BaseModel):
+    full_name: str
+    role: UserRole
+    is_active: bool
+    password: str | None = None
+
+
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

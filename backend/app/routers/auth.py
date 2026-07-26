@@ -4,11 +4,26 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import get_current_user, require_admin
-from app.models.user import User
-from app.schemas.user import Token, UserCreate, UserOut
+from app.models.user import User, UserRole
+from app.schemas.user import Token, UserCreate, UserOut, UserUpdate
 from app.services.auth import create_access_token, hash_password, verify_password
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _get_user_or_404(db: Session, user_id: int) -> User:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return user
+
+
+def _other_admins_count(db: Session, excluding_user_id: int) -> int:
+    return (
+        db.query(User)
+        .filter(User.role == UserRole.admin, User.id != excluding_user_id)
+        .count()
+    )
 
 
 @router.post("/login", response_model=Token)
@@ -57,3 +72,50 @@ def create_user(
 @router.get("/users", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db), _admin: User = Depends(require_admin)):
     return db.query(User).order_by(User.username).all()
+
+
+@router.put("/users/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    user = _get_user_or_404(db, user_id)
+
+    demoting_or_deactivating = payload.role != UserRole.admin or not payload.is_active
+    if user.role == UserRole.admin and demoting_or_deactivating:
+        if user.id == admin.id:
+            raise HTTPException(
+                status_code=400,
+                detail="No puedes quitarte el rol de admin ni desactivar tu propia cuenta",
+            )
+        if _other_admins_count(db, excluding_user_id=user.id) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No puedes quitarle el rol de admin al último administrador",
+            )
+
+    user.full_name = payload.full_name
+    user.role = payload.role
+    user.is_active = payload.is_active
+    if payload.password:
+        user.hashed_password = hash_password(payload.password)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    user = _get_user_or_404(db, user_id)
+    if user.id == admin.id:
+        raise HTTPException(status_code=400, detail="No puedes borrar tu propia cuenta")
+    if user.role == UserRole.admin and _other_admins_count(db, excluding_user_id=user.id) == 0:
+        raise HTTPException(status_code=400, detail="No puedes borrar al último administrador")
+    db.delete(user)
+    db.commit()
