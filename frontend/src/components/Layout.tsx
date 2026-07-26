@@ -1,53 +1,57 @@
-import type { ReactNode } from 'react'
-import { NavLink } from 'react-router-dom'
-import { useAuth } from '../auth/AuthContext'
-import logo from '../assets/logolabapp.jpg'
+import { NavLink, Outlet } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import logoMenu from "../assets/logo_menu.jpg";
 
-function Tab({ to, children }: { to: string; children: ReactNode }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-          isActive ? 'bg-emerald-600 text-white' : 'text-stone-600 hover:bg-stone-100'
-        }`
-      }
-    >
-      {children}
-    </NavLink>
-  )
-}
+const linkClass = ({ isActive }: { isActive: boolean }) =>
+  `px-3 py-2 rounded-md text-sm font-medium ${
+    isActive
+      ? "bg-emerald-600 text-white"
+      : "text-slate-600 hover:bg-slate-100"
+  }`;
 
-export function Layout({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth()
+export default function Layout() {
+  const { user, logout } = useAuth();
 
   return (
-    <div className="min-h-screen bg-stone-50">
-      <header className="border-b border-stone-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-4">
-            <img src={logo} alt="labapp" className="h-10 w-auto object-contain" />
+    <div className="min-h-screen bg-slate-50">
+      <header className="bg-white border-b border-slate-200">
+        <div className="mx-auto max-w-7xl px-4 flex items-center justify-between h-16">
+          <div className="flex items-center gap-6">
+            <img src={logoMenu} alt="LabApp" className="h-9 w-auto object-contain" />
             <nav className="flex gap-1">
-              <Tab to="/captura">Captura</Tab>
-              {user?.role === 'admin' && <Tab to="/dashboard">Dashboard</Tab>}
-              {user?.role === 'admin' && <Tab to="/catalogo">Catálogo</Tab>}
-              {user?.role === 'admin' && <Tab to="/usuarios">Usuarios</Tab>}
+              <NavLink to="/" end className={linkClass}>
+                Dashboard
+              </NavLink>
+              <NavLink to="/crear-lote" className={linkClass}>
+                Crear Lote
+              </NavLink>
+              <NavLink to="/actualizar" className={linkClass}>
+                Actualizar
+              </NavLink>
+              <NavLink to="/catalogos" className={linkClass}>
+                Catálogos
+              </NavLink>
+              {user?.rol === "admin" && (
+                <NavLink to="/usuarios" className={linkClass}>
+                  Usuarios
+                </NavLink>
+              )}
             </nav>
           </div>
-          <div className="flex items-center gap-3 text-sm text-stone-600">
-            <span>
-              {user?.full_name} <span className="text-stone-400">({user?.role})</span>
-            </span>
+          <div className="flex items-center gap-3 text-sm text-slate-600">
+            <span>{user?.nombre}</span>
             <button
               onClick={logout}
-              className="rounded-md border border-stone-300 px-2.5 py-1 text-stone-700 hover:bg-stone-100"
+              className="px-3 py-1.5 rounded-md border border-slate-300 hover:bg-slate-100"
             >
               Salir
             </button>
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-5xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-7xl px-4 py-6">
+        <Outlet />
+      </main>
     </div>
-  )
+  );
 }

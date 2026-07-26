@@ -1,222 +1,100 @@
-import csv
-import io
-from datetime import date, timedelta
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, aliased
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.database import get_db
-from app.deps import require_admin
-from app.models.inventario import CatalogItem, Genus, InventoryLog, Species
-from app.models.user import User
-from app.schemas.dashboard import DashboardSummaryOut, DashboardUrgenteOut
-from app.services.inventory_metrics import compute_log_metrics
+from app.core.database import get_db
+from app.core.deps import get_current_user
+from app.models.catalogos import Especie, Genero
+from app.models.cohorte import Cohorte, FaseCohorte
+from app.models.lote import Lote
+from app.schemas.cohorte import CohorteOut
+from app.schemas.dashboard import LoteDashboardItem
 
-router = APIRouter(
-    prefix="/api/dashboard",
-    tags=["dashboard"],
-    dependencies=[Depends(require_admin)],
-)
+router = APIRouter(prefix="/api/dashboard", tags=["dashboard"], dependencies=[Depends(get_current_user)])
+
+# Umbrales del semáforo de antigüedad (días desde la última revisión).
+DIAS_VERDE_MAX = 7
+DIAS_AMARILLO_MAX = 14
 
 
-def _default_period(desde: date | None, hasta: date | None) -> tuple[date, date]:
-    hasta = hasta or date.today()
-    desde = desde or (hasta - timedelta(days=30))
-    return desde, hasta
+def _semaforo(dias: int | None) -> str:
+    if dias is None or dias > DIAS_AMARILLO_MAX:
+        return "rojo"
+    if dias > DIAS_VERDE_MAX:
+        return "amarillo"
+    return "verde"
 
 
-def _latest_log_alias():
-    """El estado actual de un catálogo es siempre su log más reciente."""
-    rn = func.row_number().over(
-        partition_by=InventoryLog.catalog_item_id,
-        order_by=(InventoryLog.created_at.desc(), InventoryLog.id.desc()),
-    ).label("rn")
-    subq = select(InventoryLog, rn).subquery()
-    return aliased(InventoryLog, subq), subq
-
-
-@router.get("/summary", response_model=DashboardSummaryOut)
-def dashboard_summary(
-    desde: date | None = None,
-    hasta: date | None = None,
-    genus_id: int | None = None,
-    species_id: int | None = None,
+@router.get("", response_model=list[LoteDashboardItem])
+def get_dashboard(
+    fase: FaseCohorte,
+    genero_id: int | None = None,
+    especie_id: int | None = None,
     db: Session = Depends(get_db),
 ):
-    desde, hasta = _default_period(desde, hasta)
+    query = (
+        db.query(Cohorte, Lote, Especie, Genero)
+        .join(Lote, Cohorte.lote_id == Lote.id)
+        .join(Especie, Lote.especie_id == Especie.id)
+        .join(Genero, Especie.genero_id == Genero.id)
+        .filter(Cohorte.fase == fase, Cohorte.cantidad > 0)
+    )
+    if especie_id is not None:
+        query = query.filter(Lote.especie_id == especie_id)
+    if genero_id is not None:
+        query = query.filter(Especie.genero_id == genero_id)
 
-    LatestLog, subq = _latest_log_alias()
-    latest_q = (
-        db.query(LatestLog)
-        .join(CatalogItem, CatalogItem.id == LatestLog.catalog_item_id)
-        .join(Species, Species.id == CatalogItem.species_id)
-        .filter(subq.c.rn == 1)
-    )
-    if genus_id is not None:
-        latest_q = latest_q.filter(Species.genus_id == genus_id)
-    if species_id is not None:
-        latest_q = latest_q.filter(CatalogItem.species_id == species_id)
-    latest_logs = latest_q.all()
-    total_frascos_laboratorio = sum(
-        l.normal_jars + l.ready_jars + l.rescue_1_jars + l.rescue_2_jars
-        for l in latest_logs
-    )
-    frascos_en_rescate_activos = sum(
-        l.rescue_1_jars + l.rescue_2_jars for l in latest_logs
-    )
+    rows = query.all()
 
-    period_q = (
-        db.query(InventoryLog)
-        .join(CatalogItem, CatalogItem.id == InventoryLog.catalog_item_id)
-        .join(Species, Species.id == CatalogItem.species_id)
-        .filter(
-            InventoryLog.last_subculture_date >= desde,
-            InventoryLog.last_subculture_date <= hasta,
-        )
-    )
-    if genus_id is not None:
-        period_q = period_q.filter(Species.genus_id == genus_id)
-    if species_id is not None:
-        period_q = period_q.filter(CatalogItem.species_id == species_id)
-    period_logs = period_q.all()
-    total_registrado = sum(
-        l.normal_jars + l.ready_jars + l.rescue_1_jars + l.rescue_2_jars + l.discarded_jars
-        for l in period_logs
-    )
-    total_descartado = sum(l.discarded_jars for l in period_logs)
-    porcentaje_merma = round(
-        (total_descartado / total_registrado * 100) if total_registrado else 0.0, 2
-    )
+    por_lote: dict[int, dict] = {}
+    hoy = date.today()
 
-    return DashboardSummaryOut(
-        periodo_desde=desde,
-        periodo_hasta=hasta,
-        total_frascos_laboratorio=total_frascos_laboratorio,
-        frascos_en_rescate_activos=frascos_en_rescate_activos,
-        catalogos_con_estado=len(latest_logs),
-        porcentaje_merma=porcentaje_merma,
-    )
+    for cohorte, lote, especie, genero in rows:
+        entry = por_lote.get(lote.id)
+        if entry is None:
+            entry = {
+                "lote": lote,
+                "genero_nombre": genero.nombre,
+                "especie_nombre": especie.nombre,
+                "tipo_frasco_nombre": lote.tipo_frasco.nombre,
+                "tipo_medio_nombre": lote.tipo_medio.nombre,
+                "cohortes": [],
+            }
+            por_lote[lote.id] = entry
+        entry["cohortes"].append(cohorte)
 
+    resultado: list[LoteDashboardItem] = []
+    for lote_id, entry in por_lote.items():
+        cohortes = entry["cohortes"]
+        total_frascos = sum(c.cantidad for c in cohortes)
+        dias_por_cohorte = [
+            (hoy - c.fecha_ultima_revision).days if c.fecha_ultima_revision else None
+            for c in cohortes
+        ]
+        dias_mas_antiguos = None
+        if dias_por_cohorte:
+            conocidos = [d for d in dias_por_cohorte if d is not None]
+            dias_mas_antiguos = max(conocidos) if conocidos else None
+        if any(d is None for d in dias_por_cohorte):
+            semaforo = "rojo"
+        else:
+            semaforo = _semaforo(dias_mas_antiguos)
 
-@router.get("/urgentes", response_model=list[DashboardUrgenteOut])
-def dashboard_urgentes(
-    genus_id: int | None = None,
-    species_id: int | None = None,
-    db: Session = Depends(get_db),
-):
-    LatestLog, subq = _latest_log_alias()
-    q = (
-        db.query(LatestLog, CatalogItem, Species, Genus)
-        .join(CatalogItem, CatalogItem.id == LatestLog.catalog_item_id)
-        .join(Species, Species.id == CatalogItem.species_id)
-        .join(Genus, Genus.id == Species.genus_id)
-        .filter(subq.c.rn == 1)
-    )
-    if genus_id is not None:
-        q = q.filter(Genus.id == genus_id)
-    if species_id is not None:
-        q = q.filter(Species.id == species_id)
-    rows = q.order_by(LatestLog.last_subculture_date.asc()).all()
-
-    result = []
-    for log, item, species, genus in rows:
-        metrics = compute_log_metrics(
-            last_subculture_date=log.last_subculture_date,
-            normal_jars=log.normal_jars,
-            rescue_1_jars=log.rescue_1_jars,
-            rescue_2_jars=log.rescue_2_jars,
-        )
-        result.append(
-            DashboardUrgenteOut(
-                catalog_item_id=item.id,
-                catalog_code=item.catalog_code,
-                genus=genus.name,
-                species=species.name,
-                log_id=log.id,
-                last_subculture_date=log.last_subculture_date,
-                normal_jars=log.normal_jars,
-                ready_jars=log.ready_jars,
-                rescue_1_jars=log.rescue_1_jars,
-                rescue_2_jars=log.rescue_2_jars,
-                **metrics,
+        resultado.append(
+            LoteDashboardItem(
+                lote_id=lote_id,
+                folio=entry["lote"].folio,
+                genero_nombre=entry["genero_nombre"],
+                especie_nombre=entry["especie_nombre"],
+                tipo_frasco_nombre=entry["tipo_frasco_nombre"],
+                tipo_medio_nombre=entry["tipo_medio_nombre"],
+                fecha_siembra=entry["lote"].fecha_siembra,
+                total_frascos=total_frascos,
+                dias_mas_antiguos=dias_mas_antiguos,
+                semaforo=semaforo,
+                cohortes=[CohorteOut.model_validate(c) for c in cohortes],
             )
         )
-    return result
 
-
-_EXPORT_HEADERS = [
-    "catalog_code", "genero", "especie", "last_subculture_date",
-    "normal_jars", "ready_jars", "rescue_1_jars", "rescue_2_jars",
-    "discarded_jars", "discard_reason", "notes", "actualizado_por",
-    "created_at", "updated_at",
-]
-
-
-def _export_row(log: InventoryLog, item: CatalogItem, species: Species, genus: Genus, user: User) -> list:
-    return [
-        item.catalog_code, genus.name, species.name,
-        log.last_subculture_date.isoformat(),
-        log.normal_jars, log.ready_jars, log.rescue_1_jars, log.rescue_2_jars,
-        log.discarded_jars, log.discard_reason.value if log.discard_reason else "",
-        log.notes or "", user.username,
-        log.created_at.isoformat(), log.updated_at.isoformat(),
-    ]
-
-
-@router.get("/export")
-def dashboard_export(
-    desde: date | None = None,
-    hasta: date | None = None,
-    formato: str = "csv",
-    db: Session = Depends(get_db),
-):
-    if formato not in ("csv", "xlsx"):
-        raise HTTPException(status_code=422, detail="formato debe ser 'csv' o 'xlsx'")
-
-    desde, hasta = _default_period(desde, hasta)
-
-    rows = (
-        db.query(InventoryLog, CatalogItem, Species, Genus, User)
-        .join(CatalogItem, CatalogItem.id == InventoryLog.catalog_item_id)
-        .join(Species, Species.id == CatalogItem.species_id)
-        .join(Genus, Genus.id == Species.genus_id)
-        .join(User, User.id == InventoryLog.updated_by)
-        .filter(
-            InventoryLog.last_subculture_date >= desde,
-            InventoryLog.last_subculture_date <= hasta,
-        )
-        .order_by(InventoryLog.last_subculture_date.asc(), CatalogItem.catalog_code.asc())
-        .all()
-    )
-
-    filename_base = f"labapp_logs_{desde.isoformat()}_{hasta.isoformat()}"
-
-    if formato == "xlsx":
-        from openpyxl import Workbook
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "logs"
-        ws.append(_EXPORT_HEADERS)
-        for log, item, species, genus, user in rows:
-            ws.append(_export_row(log, item, species, genus, user))
-        buf = io.BytesIO()
-        wb.save(buf)
-        return Response(
-            content=buf.getvalue(),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": f'attachment; filename="{filename_base}.xlsx"'},
-        )
-
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow(_EXPORT_HEADERS)
-    for log, item, species, genus, user in rows:
-        writer.writerow(_export_row(log, item, species, genus, user))
-    return Response(
-        content=buf.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{filename_base}.csv"'},
-    )
+    return resultado

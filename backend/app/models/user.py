@@ -1,24 +1,22 @@
 import enum
 
-from sqlalchemy import Boolean, Column, DateTime, Enum, Integer, String, func
+from sqlalchemy import Column, Integer, String, Enum, DateTime, func
 
-from app.database import Base
+from app.core.database import Base
 
 
-class UserRole(str, enum.Enum):
+class RolUsuario(str, enum.Enum):
     admin = "admin"
-    tech = "tech"
+    operador = "operador"
 
 
 class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True)
-    username = Column(String(50), unique=True, nullable=False, index=True)
-    full_name = Column(String(150), nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(Enum(UserRole), nullable=False, default=UserRole.tech)
-    is_active = Column(Boolean, nullable=False, default=True)
-
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    nombre = Column(String(120), nullable=False)
+    email = Column(String(180), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    rol = Column(Enum(RolUsuario), nullable=False, default=RolUsuario.operador)
+    activo = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

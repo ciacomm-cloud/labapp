@@ -1,84 +1,127 @@
 # labapp — Sistema de Control de Inventario y Producción (Laboratorio de Micropropagación)
 
-Proyecto nuevo e independiente. **Sin relación** con lab.castamay.com ni con
-ningún otro proyecto existente — auth, base de datos y despliegue son propios
-de este repo.
+## v2 — Modelo de linaje por cohortes (reemplaza v1 por completo)
 
-## Stack
+**v1** (commits anteriores en este mismo historial) modelaba cada lote como
+una fila con conteos agregados semanales (X normales, Y en rescate, Z
+descartados). Eso perdía el origen y la trayectoria de cada grupo de
+frascos — no había forma de saber, dos semanas después, qué pasó exactamente
+con los frascos que "desaparecieron" de una categoría.
 
-- **Backend:** FastAPI + SQLAlchemy 2.x + Alembic (migraciones versionadas).
-- **DB:** MySQL/Percona (no Postgres — este servidor es CloudPanel y solo
-  tiene MySQL disponible). Driver `PyMySQL`.
-- **Auth:** JWT propio (PyJWT) + `passlib[bcrypt]` para hashing. Construido
-  desde cero para este proyecto — no reutiliza nada de otros sistemas.
-- **Frontend:** Vite + React + TypeScript + Tailwind CSS v4 (`@tailwindcss/vite`),
-  React Router v7. SPA cliente-only, sin SSR/RSC.
+**v2** modela el proceso real del laboratorio: un `Lote` nace como una
+siembra única (una `Cohorte` raíz), y con el tiempo se ramifica en
+`Cohorte`s hijas que divergen en destino (normal, contaminado, endofitos,
+multiplicado...). Cada rama conserva referencia a su padre
+(`parent_cohorte_id`, self-referencing) y cada transición queda en
+`EventoCohorte`, una tabla histórica **append-only** — nunca se sobreescribe.
 
-## Decisiones técnicas tomadas
+Todo el código de modelos/rutas/componentes de v1 (`inventario.py`,
+`CapturaPage.tsx`, `CatalogoPage.tsx`, conteos agregados) fue reemplazado.
+No había datos de producción reales que preservar; se reconstruyó desde
+cero manteniendo el historial de git.
 
-1. **`catalog_code`**: asignado manualmente por el admin al crear el
-   `CatalogItem`. No hay autogeneración de folios (`C0001`, `C0002`...).
-2. **`InventoryLog` es histórico puro, no upsert.** Se permiten múltiples
-   logs por catálogo en la misma semana — cada `POST` crea una fila nueva.
-   El "estado actual" de un catálogo es siempre su log más reciente
-   (`ORDER BY created_at DESC LIMIT 1`), nunca un registro que se sobreescribe.
-3. **Sin fotos por ahora.** El esquema de `inventory_logs` no tiene columna
-   para adjuntos. Diseño pensado para que agregarlo después sea una migración
-   aditiva y no rompa nada (columna nullable nueva, o tabla `inventory_log_photos`
-   aparte con FK a `inventory_logs.id` — decidir cuando se implemente).
-4. **Motor de BD: MySQL, no Postgres.** El spec original asumía Postgres;
-   se corrigió tras verificar que el servidor solo tiene MySQL/Percona
-   corriendo (CloudPanel, sin `sudo` a nivel de BD más allá de
-   `clpctlWrapper db:export/import`). La base `applab` y el usuario `labapp`
-   se crearon manualmente desde el panel de CloudPanel.
-5. **Alembic desde el día 1** (no `create_all()`) para tener migraciones
-   versionadas en un proyecto que va a producción.
-6. **Usuarios:** tabla `users` propia con `role` enum (`admin` | `tech`).
-   No hay roles adicionales todavía.
+## Stack (sin cambios respecto a v1)
 
-## Gotchas conocidos
+- **Backend:** FastAPI + SQLAlchemy 2.x + Alembic. DB MySQL (no Postgres —
+  este servidor es CloudPanel y solo tiene MySQL/Percona). Driver `PyMySQL`.
+- **Auth:** JWT propio (`python-jose`) + `passlib[bcrypt]`.
+- **Frontend:** Vite + React + TypeScript + Tailwind CSS v4
+  (`@tailwindcss/vite`) + React Router v7. SPA cliente-only.
 
-**`passlib` + `bcrypt`:** `passlib==1.7.4` es incompatible con `bcrypt>=4.1`
-(rompe el backend con `AttributeError: module 'bcrypt' has no attribute
-'__about__'` y luego `ValueError: password cannot be longer than 72 bytes`).
-Fijado a `bcrypt==4.0.1` en `requirements.txt`. Si se actualiza `passlib`,
-revisar si ya soporta bcrypt 4.1+/5.x antes de destapar el pin.
+## Modelo de datos v2
 
-**`react-router` advisory sin patch disponible:** `npm audit` reporta un
-"High" (RSC Mode CSRF Bypass, GHSA-qwww-vcr4-c8h2) en el rango
-`7.12.0-8.2.0` — cubre la última versión estable (`7.18.1`, la que usamos).
-Es específico de **RSC Mode** (React Server Components / server actions);
-esta app es una SPA cliente-only con `BrowserRouter`, no usa RSC ni loaders
-de servidor, así que no aplica. No degradar la versión para "resolverlo":
-versiones anteriores (probado `7.11.0`) tienen un historial mucho más largo
-de CVEs reales (XSS, RCE, open redirect) que sí aplicarían. Mantener en la
-última estable.
+- `generos`, `especies` (+ `numero_id`, nuevo campo para el futuro esquema
+  de folios), `tipos_frasco`, `tipos_medio`: catálogos base.
+- `lotes`: metadata fija del evento de siembra (especie, tipo de frasco,
+  tipo de medio, cantidad sembrada, fecha, folio). No cambia tras crearse.
+- `cohortes`: `lote_id`, `parent_cohorte_id` (nullable, self-referencing),
+  `fase` (enum: inicio, multiplicacion, enraizamiento, endurecimiento,
+  rescate_1, rescate_2, normal, contaminado, descartado), `cantidad`,
+  `fecha_ultima_revision` (alimenta el semáforo de antigüedad).
+- `eventos_cohorte`: histórico append-only. `cohorte_padre_id` (siempre),
+  `cohorte_hija_id` (nullable — null en `sin_cambios`), `tipo_evento`,
+  `cantidad`, `motivo` (obligatorio en `contaminacion`/`rescate_falla`),
+  `notas`, `fecha`, `usuario_id`.
 
-**Fechas del frontend: usar hora local, no UTC.** `new Date().toISOString()`
-da la fecha en UTC, y el servidor corre en CST (UTC-6) — usar
-`toISOString().slice(0,10)` para "hoy" hace que la captura registre un día
-adelante del servidor durante buena parte del día, y el backend calculaba
-`dias_transcurridos` en negativo. Se encontró probando la app real en
-navegador (Playwright), no por `tsc`/build. Fix: `src/lib/dates.ts` usa
-`getFullYear()/getMonth()/getDate()` (hora local) en vez de `toISOString()`.
-Cualquier fecha "hoy" nueva en el frontend debe pasar por ese helper.
+**Divergencia vs. multiplicación** (`app/routers/cohortes.py`,
+`capturar_eventos`): una sesión de captura es una lista de eventos sobre
+una misma cohorte padre, procesados en orden con un contador `remaining`
+que arranca en `cohorte_padre.cantidad`. Los eventos de divergencia
+(contaminación, endofitos, enraizamiento, endurecimiento, resultados de
+rescate) restan `cantidad` de `remaining` y crean una hija con esa misma
+cantidad — el total se conserva. `multiplicacion` es distinto: consume
+**todo** el `remaining` restante de esa sesión y la hija nace con la
+cantidad nueva indicada (puede ser mayor) — es expansión, no reparto. Al
+final, `cohorte_padre.cantidad` se actualiza a `remaining` (lo que no se
+mencionó en ningún evento sigue siendo la misma cohorte, sin hija nueva).
 
-**Un 401 no siempre significa "sesión expirada".** `lib/api.ts` interceptaba
-*cualquier* respuesta 401 (de cualquier endpoint) como "tu sesión expiró" y
-mostraba ese mensaje genérico — incluyendo el propio `POST /api/auth/login`
-cuando rechaza credenciales incorrectas. Resultado: un login fallido (usuario
-o password mal) mostraba "Sesión expirada, vuelve a iniciar sesión" en vez
-del detalle real del backend ("Usuario o contraseña incorrectos"), incluso
-en la primerísima visita sin sesión previa — confuso porque nunca hubo
-sesión que expirar. Reportado en producción 2026-07-25, reproducido con
-Playwright en contexto de navegador limpio (sin storage previo) contra
-`https://labapp.castamay.com`. Fix: el branch de "limpiar token + notificar
-sesión expirada" en `request()` ahora solo se dispara si la request llevaba
-un `Authorization: Bearer` nuestro (`res.status === 401 && token`) — el login
-nunca manda ese header, así que su 401 cae al manejo genérico de errores y
-muestra el `detail` real del backend. Verificado que el caso legítimo (token
-inválido/vencido guardado) sigue limpiando el token correctamente al perder
-una request autenticada.
+**Folios/códigos**: el formato exacto (`CA054-01`, `CA054-01-A`, etc.) está
+pendiente de confirmación con el director del laboratorio. Los campos
+`lotes.folio` y `cohortes.codigo` existen en el esquema pero se guardan
+`NULL` — no hay generación automática implementada todavía (a propósito,
+ver spec v2 sec. 3).
+
+## Gotchas encontrados en esta sesión
+
+**MySQL no soporta `NULLS FIRST`.** `Cohorte.fecha_ultima_revision.asc().nullsfirst()`
+genera SQL inválido en MySQL (`nullsfirst()`/`nullslast()` son sintaxis de
+Postgres/SQLite). En MySQL, `NULL` ya ordena antes que cualquier valor con
+`ASC` de forma nativa — basta con `.asc()` a secas. Si se necesita
+`NULLS LAST` en el futuro, no hay equivalente directo: usar
+`case((columna.is_(None), 1), else_=0)` como criterio de orden adicional.
+
+**Pydantic v2 `model_validate()` no permite completar campos requeridos
+después.** El patrón `obj = Schema.model_validate(orm_instance); obj.campo
+= valor` falla si `campo` es requerido en el schema pero no existe como
+atributo en `orm_instance` (p. ej. `LoteConCohorteRaiz.cohorte_raiz` no es
+un atributo de `Lote`) — la validación ocurre por completo dentro de
+`model_validate()`, antes de que la asignación posterior tenga oportunidad
+de correr. Fix: construir el modelo completo de una vez
+(`Schema(**Base.model_validate(x).model_dump(), campo_extra=...)`) en vez de
+validar y luego asignar. Afectó `POST/GET /api/lotes/{id}` (500 en
+producción). `CohorteConHistorial.eventos_como_padre` no tuvo este problema
+porque el campo tiene default (`= []`).
+
+**`StaticFiles(html=True)` no sirve `index.html` para subrutas del SPA.**
+Solo lo hace en la raíz (`/`); navegar directo o refrescar en `/login`,
+`/crear-lote`, etc. daba 404. Fix en `app/main.py`: mount de `/assets` por
+separado + una ruta catch-all `GET /{full_path:path}` que sirve el archivo
+si existe físicamente en `dist/`, o cae a `index.html` en cualquier otro
+caso (excepto rutas que empiezan con `api/`, que devuelven 404 real).
+
+**Un mensaje de éxito que se limpia a sí mismo.** En `Actualizar.tsx`,
+`guardar()` hacía `setOk(mensaje)` y luego llamaba a `cargarDetalle(id)`
+para refrescar el historial — pero `cargarDetalle` empezaba con
+`setOk(null)`. Como ambas llamadas ocurren en el mismo tick síncrono, React
+batchea las actualizaciones y el estado final era `null`: el POST
+funcionaba (verificado con curl/logs), pero el toast "Guardado: ..." nunca
+se veía. Fix: separar la carga de datos (`loadDetalle`, sin tocar
+error/ok) de `cargarDetalle` (que sí resetea mensajes, para usarse al
+cambiar de cohorte desde el selector), y en `guardar()` llamar
+`setOk(...)` **después** de `await loadDetalle(...)`, no antes.
+
+**Gotchas de v1 que siguen aplicando:** `passlib==1.7.4` requiere
+`bcrypt==4.0.1` fijo (versiones `>=4.1` rompen con `AttributeError:
+module 'bcrypt' has no attribute '__about__'`).
+
+## Despliegue
+
+Corre bajo el usuario del sistema **`labappuser`** (cuenta actual de este
+proyecto en `vmi3229826`; no confundir con `castamay-lab`, que es un
+proyecto distinto y no relacionado — `lab.castamay.com` / MicroProp LMS,
+puerto 8765).
+
+- Backend: `~/.config/systemd/user/labapp-api.service` (uvicorn,
+  `127.0.0.1:8766`). `loginctl enable-linger labappuser` habilitado para
+  que sobreviva a logout/reinicio.
+- Frontend: `npm run build` → `frontend/dist/`, servido por el propio
+  FastAPI (mismo proceso, mismo puerto — ver gotcha de SPA fallback arriba).
+  Un solo punto de entrada tras el reverse proxy de CloudPanel.
+- DB: MySQL `caladiopower`, usuario `xanadugreen`. Credenciales en
+  `backend/.env` (gitignored, no commiteado).
+- Cambios de backend requieren `systemctl --user restart labapp-api.service`;
+  cambios de frontend requieren `npm run build` (el restart no es necesario
+  si solo cambió el frontend, ya que `main.py` sirve `dist/` en caliente).
 
 ## Estructura
 
@@ -86,130 +129,37 @@ una request autenticada.
 labapp/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py            # FastAPI app, CORS, routers
-│   │   ├── config.py          # Settings desde .env (pydantic-settings)
-│   │   ├── database.py        # engine, SessionLocal, Base, get_db
-│   │   ├── deps.py            # get_current_user, require_role, require_admin, require_any_role
-│   │   ├── models/
-│   │   │   ├── user.py        # User, UserRole
-│   │   │   └── inventario.py  # Genus, Species, CatalogItem, InventoryLog, DiscardReason
-│   │   ├── schemas/
-│   │   │   ├── user.py        # UserCreate, UserOut, Token
-│   │   │   ├── inventario.py  # Genus/Species/CatalogItem Create/Update/Out
-│   │   │   ├── inventory_log.py  # InventoryLogCreate/Update/Out
-│   │   │   └── dashboard.py   # DashboardSummaryOut, DashboardUrgenteOut
-│   │   ├── routers/
-│   │   │   ├── auth.py        # /api/auth/login, /me, /users (admin)
-│   │   │   ├── inventario.py  # /api/inventario/genera, /species
-│   │   │   ├── catalog.py     # /api/catalog-items (+ /{id}/logs)
-│   │   │   └── dashboard.py   # /api/dashboard/summary, /urgentes, /export
-│   │   └── services/
-│   │       ├── auth.py               # hash_password, verify_password, JWT
-│   │       ├── inventory_rules.py    # validate_log_balances
-│   │       └── inventory_metrics.py  # compute_log_metrics
-│   ├── alembic/                # migraciones versionadas
-│   ├── requirements.txt
-│   ├── .env                    # NO commiteado — credenciales reales
-│   └── .env.example
-├── frontend/                    # Vite + React + TS + Tailwind v4
-│   ├── src/
-│   │   ├── lib/
-│   │   │   ├── api.ts          # fetch wrapper, JWT, login(), downloadExport()
-│   │   │   ├── types.ts        # tipos espejo de los schemas del backend
-│   │   │   └── dates.ts        # fechas en hora local (ver gotcha arriba)
-│   │   ├── auth/AuthContext.tsx
-│   │   ├── components/         # Layout (tabs por rol), ProtectedRoute, SemaforoBadge
-│   │   └── pages/
-│   │       ├── LoginPage.tsx
-│   │       ├── CapturaPage.tsx     # tech + admin
-│   │       ├── DashboardPage.tsx   # admin only
-│   │       ├── CatalogoPage.tsx    # admin only, tabs Géneros/Especies/Catálogo
-│   │       ├── catalogo/           # GeneraSection, SpeciesSection, CatalogSection
-│   │       └── UsersPage.tsx       # admin only, CRUD de usuarios
-│   └── dist/                    # build de producción (gitignored)
-└── CLAUDE.md
+│   │   ├── main.py              # FastAPI app, CORS, routers, SPA fallback
+│   │   ├── core/
+│   │   │   ├── config.py        # Settings desde .env (pydantic-settings)
+│   │   │   ├── database.py      # engine, SessionLocal, Base, get_db
+│   │   │   ├── security.py      # hash/verify password, JWT
+│   │   │   └── deps.py          # get_current_user, require_admin
+│   │   ├── models/               # Genero, Especie, TipoFrasco, TipoMedio,
+│   │   │                         # Lote, Cohorte, EventoCohorte, User
+│   │   ├── schemas/              # espejo pydantic de los modelos
+│   │   └── routers/
+│   │       ├── auth.py           # /api/auth/login
+│   │       ├── users.py          # /api/users (admin)
+│   │       ├── catalogos.py      # /api/catalogos/* (4 catálogos)
+│   │       ├── lotes.py          # /api/lotes (crea lote + cohorte raíz)
+│   │       ├── cohortes.py       # /api/cohortes, /{id}/eventos (captura)
+│   │       └── dashboard.py      # /api/dashboard?fase=&genero_id=&especie_id=
+│   ├── alembic/
+│   └── requirements.txt
+└── frontend/
+    └── src/
+        ├── lib/api.ts, types.ts
+        ├── context/AuthContext.tsx
+        ├── components/Layout.tsx, ProtectedRoute.tsx
+        └── pages/
+            ├── Login.tsx
+            ├── Dashboard.tsx       # tabs por fase, listado por lote, semáforo
+            ├── CrearLote.tsx
+            ├── Actualizar.tsx      # captura de eventos, nace linaje
+            ├── Catalogos.tsx       # 4 sub-tabs CRUD
+            └── Usuarios.tsx        # admin only
 ```
-
-## Despliegue en producción (labapp.castamay.com)
-
-**Arquitectura actual (desde 2026-07-25): código y proceso corren nativamente
-bajo el usuario `castamay-labapp`** — el dueño real del vhost/document root
-de `labapp.castamay.com` en CloudPanel. nginx sigue haciendo reverse proxy
-hacia el backend (uvicorn en loopback), igual que antes.
-
-**Por qué el cambio:** la Fase 1 se desplegó originalmente bajo el usuario
-`caladiorosevelvet` (ver historial más abajo) porque esa era la sesión
-disponible en ese momento y no había forma de operar como `castamay-labapp`
-desde ahí (sin `su`/`sudo -u`). En una sesión posterior sí hubo login directo
-como `castamay-labapp`, y se migró para que el sitio corra bajo su propio
-usuario — aislamiento por sitio, un usuario del sistema por dominio, mismo
-patrón ya usado en el resto de los proyectos de este servidor (p. ej.
-`lab.castamay.com` bajo `castamay-lab`, puerto 8765). Corregir esto evita que
-un sitio dependa del ciclo de vida de la cuenta de otro.
-
-Restricciones de permisos verificadas que siguen aplicando (independientes
-del usuario):
-
-- No hay acceso de lectura/escritura a `/etc/nginx/*` (vhosts, sites-enabled)
-  desde ningún usuario de aplicación. Cambios al vhost requieren el panel de
-  CloudPanel (rol admin) o acceso root directo.
-- Un usuario del sistema no puede controlar el `systemctl --user` /
-  `loginctl` de otro (D-Bus de sesión separado) — el cutover entre usuarios
-  requiere que cada lado detenga/arranque su propio servicio.
-- Sí hay: permiso de escritura de grupo sobre
-  `/home/castamay-labapp/htdocs/labapp.castamay.com/` (para depositar el
-  build estático del frontend cuando exista).
-
-**Backend (desplegado bajo `castamay-labapp`):**
-
-- Código en `/home/castamay-labapp/labapp/` (fuera de `htdocs/`, que es solo
-  para el build estático del frontend).
-- Unidad systemd de usuario: `~/.config/systemd/user/labapp-api.service`
-  (copia versionada en `deploy/labapp-api.service`).
-- Corre `uvicorn app.main:app --host 127.0.0.1 --port 8766 --workers 2`.
-- `systemctl --user enable --now labapp-api.service` + `loginctl enable-linger
-  castamay-labapp` → sobrevive reinicios y logout.
-- DB sin cambios: mismo MySQL `applab`/usuario `labapp`, mismas migraciones
-  Alembic ya aplicadas (`alembic current` == head, no se re-corrieron).
-- Verificado end-to-end vía `https://labapp.castamay.com`: `/api/health` →
-  `{"status":"ok"}`, login (`/api/auth/login`) → JWT válido.
-
-**Historial — despliegue original bajo `caladiorosevelvet` (Fase 1, ya dado
-de baja):** código y proceso corrían bajo `caladiorosevelvet` porque esa era
-la única sesión disponible en el momento del despliegue inicial y no había
-forma de operar como `castamay-labapp` desde ahí. Mismo puerto (8766), mismo
-mecanismo (`systemctl --user` + `linger`). Reemplazado por el despliegue
-nativo descrito arriba.
-
-**Frontend (2026-07-25 — desplegado y funcional de punta a punta):** el
-build de Vite/React (`npm run build` → `dist/`) está en
-`/home/castamay-labapp/htdocs/labapp.castamay.com/`, reemplazando el
-placeholder `index.php` (backup en
-`deploy/htdocs-placeholder-backup/index.php.bak`). El admin de CloudPanel
-editó el Vhost del server de `443` (el que atendía `labapp.castamay.com`
-directo, no el segundo server de `8080`/PHP-FPM, que quedó sin tocar):
-
-1. `location /api/` con reverse proxy a `127.0.0.1:8766` — ya existía desde
-   el despliegue del backend (Fase 1).
-2. `location /` — reemplazó el proxy a Varnish completo por
-   `try_files $uri $uri/ /index.html;`, dejando que React Router maneje el
-   ruteo del lado del cliente.
-3. Quitó el `if (-f $request_filename) { break; }` al final del bloque
-   `server` — residuo del patrón viejo de Varnish/PHP, innecesario y
-   potencialmente conflictivo con `try_files`.
-
-Verificado en producción (`curl` + Playwright en navegador real, contexto
-limpio):
-
-- `/`, `/dashboard`, `/captura`, `/catalogo`, `/login` y una ruta inventada
-  → todas 200, sirven el `index.html` del SPA.
-- Sin sesión, entrar directo a `/dashboard` redirige (client-side) a
-  `/login`.
-- Con sesión, cargar `/dashboard` o `/catalogo` **directo** (no navegado
-  desde dentro de la app — simula bookmark o F5) renderiza el contenido
-  real, no solo el shell vacío.
-- `/api/health` y los assets estáticos siguen 200, sin regresión.
-- Cero errores de consola en ninguno de los casos.
 
 ## Correr localmente
 
@@ -217,7 +167,7 @@ limpio):
 cd backend
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # y llenar DATABASE_URL / SECRET_KEY reales
+# crear .env con LABAPP_DB_USER, LABAPP_DB_PASSWORD, LABAPP_DB_NAME, LABAPP_SECRET_KEY
 alembic upgrade head
 uvicorn app.main:app --reload --port 8001
 ```
@@ -228,163 +178,9 @@ npm install
 npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
 ```
 
-## Plan de fases (spec original)
-
-1. ✅ Estructura del proyecto + migraciones de las 4 tablas de inventario + modelo de usuarios.
-2. ✅ (2026-07-25) Reglas de negocio de captura (`app/services/inventory_rules.py`):
-   `validate_log_balances()` — `discard_reason` obligatorio si `discarded_jars > 0`,
-   saldos no negativos.
-3. ✅ (2026-07-25) Métricas derivadas (`app/services/inventory_metrics.py`):
-   `dias_transcurridos`, `semaforo_antiguedad` (verde ≤25, amarillo ≤35, rojo >35),
-   `estado_critico` (normal ≤1 y hay frascos en rescate). Nunca se
-   guardan como columnas — se calculan al vuelo vía `compute_log_metrics()`.
-4. ✅ (2026-07-25) Endpoints CRUD de taxonomía (`app/routers/inventario.py` —
-   `/api/inventario/genera`, `/api/inventario/species`) y catálogo
-   (`app/routers/catalog.py` — `/api/catalog-items`). Lectura para `admin`/`tech`
-   (`require_any_role`), escritura solo `admin` (`require_admin`). Probado
-   end-to-end contra la DB real (crear/listar/duplicado 409/FK inexistente 404/borrar).
-5. ✅ (2026-07-25) Endpoint de captura semanal (`app/routers/catalog.py`):
-   `POST /api/catalog-items/{id}/logs` — `admin`/`tech` pueden crear
-   (`require_any_role`), cada POST crea una fila nueva (histórico puro, no
-   upsert, múltiples logs por semana permitidos). `PUT
-   /api/catalog-items/{id}/logs/{log_id}` — solo `admin` puede corregir
-   logs pasados (`require_admin`). Reutiliza `validate_log_balances()` de
-   `inventory_rules.py` y `compute_log_metrics()` de `inventory_metrics.py`
-   — el response de ambos endpoints incluye `dias_transcurridos`,
-   `semaforo_antiguedad` y `estado_critico` calculados al vuelo. Probado
-   end-to-end contra la DB real: creación tech, múltiples logs sin upsert,
-   discard_reason obligatorio (422), saldo negativo (422), corrección de
-   tech rechazada (403), corrección de admin aplicada (200, `updated_by`
-   actualizado), `estado_critico` en escenario de rescate.
-6. ✅ (2026-07-25) Endpoints de dashboard (`app/routers/dashboard.py`,
-   `require_admin` a nivel de router — los tres endpoints son admin-only):
-   - `GET /api/dashboard/summary?desde&hasta`: `total_frascos_laboratorio` y
-     `frascos_en_rescate_activos` son snapshot actual (suma sobre el log más
-     reciente de cada catálogo, vía `ROW_NUMBER() OVER (PARTITION BY
-     catalog_item_id ORDER BY created_at DESC)`); `porcentaje_merma` sí es
-     por periodo — `discarded_jars` / total de frascos registrados
-     (`normal+ready+rescue_1+rescue_2+discarded`) entre TODOS los logs con
-     `last_subculture_date` en `[desde, hasta]` (default: últimos 30 días).
-   - `GET /api/dashboard/urgentes`: log más reciente por catálogo, join con
-     especie/género, `ORDER BY last_subculture_date ASC` (= `dias_transcurridos`
-     desc), con métricas de `inventory_metrics.py` al vuelo.
-   - `GET /api/dashboard/export?desde&hasta&formato=csv|xlsx`: filtra
-     `InventoryLog` por `last_subculture_date` en el rango (no `created_at`),
-     un renglón por log (no solo el más reciente). Requirió agregar
-     `openpyxl` a `requirements.txt` (no había dependencia de Excel antes).
-   Probado end-to-end: acceso de tech rechazado (403) en los tres, cálculo
-   de totales/merma verificado con datos conocidos, orden de urgentes,
-   contenido de CSV y XLSX (parseado de vuelta con `openpyxl`), `formato`
-   inválido → 422.
-7. ✅ (2026-07-25) Frontend (Vite + React + TS + Tailwind v4, React Router):
-   - `LoginPage` — JWT vía `/api/auth/login` (form-urlencoded, no JSON).
-   - `CapturaPage` (`admin`/`tech`) — buscar catálogo, formulario de captura,
-     confirmación con métricas al vuelo (semáforo/estado crítico).
-   - `DashboardPage` (admin only) — stat cards, tabla de urgentes, export
-     CSV/XLSX con selector de periodo.
-   - `CatalogoPage` (admin only) — CRUD de géneros/especies/catálogo en tabs;
-     no estaba en el plan original pero sin esto no había forma de crear
-     nada que capturar, así que se agregó a esta fase.
-   - `Layout` muestra/oculta tabs Dashboard y Catálogo según `user.role`;
-     `ProtectedRoute` además bloquea acceso directo por URL.
-   Probado end-to-end **en navegador real** (Playwright headless, ver gotcha
-   de fechas arriba — así se encontró el bug de UTC/hora local): login admin
-   y tech con usuarios de prueba temporales (creados y borrados vía DB, no
-   se tocó el usuario admin real), CRUD completo de género → especie →
-   catálogo desde la UI, captura semanal con confirmación correcta, dashboard
-   con summary + urgentes reflejando el dato recién capturado, export CSV y
-   XLSX descargados y verificados (contenido correcto), tabs Dashboard/Catálogo
-   ausentes para `tech` y redirección al navegar esas rutas por URL directa,
-   cero errores de consola. Sin residuos de datos de prueba.
-   **Deploy:** build copiado a
-   `/home/castamay-labapp/htdocs/labapp.castamay.com/` (ver sección de
-   despliegue arriba) — funcional de punta a punta en producción, incluyendo
-   rutas profundas, desde que el admin de CloudPanel aplicó el `try_files`
-   en el vhost (2026-07-25).
-8. Seed de géneros/especies/catálogos existentes desde la hoja de cálculo
-   actual, para no perder folios (`# Catálogo`) ya asignados.
-9. ✅ (2026-07-25) CRUD de usuarios — no estaba en el plan de fases original
-   (la tabla de Roles siempre dijo que `admin` podía hacer "CRUD de
-   usuarios", pero solo existían `POST`/`GET /api/auth/users`; sin editar ni
-   borrar). Agregado a pedido:
-   - Backend (`app/routers/auth.py`): `PUT /api/auth/users/{id}` (nombre,
-     rol, activo/inactivo, reset de password opcional) y
-     `DELETE /api/auth/users/{id}`, ambos `require_admin`.
-   - Guardas de seguridad: un admin no puede quitarse su propio rol de admin
-     ni desactivar su propia cuenta, no puede borrarse a sí mismo, y no se
-     puede degradar/borrar al último administrador que queda en el sistema
-     (`_other_admins_count`).
-   - Frontend: tab "Usuarios" nueva (admin only) — mismo patrón que
-     Catálogo. La UI deshabilita rol/activo/borrar sobre la fila del propio
-     usuario logueado (refuerza del lado del cliente lo que el backend ya
-     exige).
-   Probado end-to-end en navegador real contra producción: crear, editar
-   (nombre + desactivar), reset de password verificado con login real,
-   protecciones de auto-modificación confirmadas en la UI, borrar, logout.
-   **Gotcha propio:** se me olvidó reiniciar `labapp-api.service` después de
-   agregar las rutas nuevas — la primera corrida del test dio 404 genérico
-   de FastAPI en el `PUT` porque el proceso vivo seguía corriendo el código
-   viejo. Recordatorio: todo cambio de backend requiere
-   `systemctl --user restart labapp-api.service` antes de probar en
-   producción, no solo redeploy del frontend.
-10. ✅ (2026-07-25) Logo real en el login. Se subió manualmente
-    `logolabapp.jpg` a `htdocs/` (fuera del control de versiones); se copió
-    a `frontend/src/assets/logolabapp.jpg` (ahora versionado, sobrevive a
-    `npm run build`) y se referencia como `import` en `LoginPage.tsx`
-    reemplazando el texto "labapp" — `w-56` centrado, mantiene proporción
-    nativa (800×336). El archivo suelto en la raíz de `htdocs/` se borró
-    una vez integrado al build (queda solo dentro de `assets/` con el hash
-    de Vite). Verificado en producción con Playwright: la imagen carga
-    (200, `naturalWidth` > 0), sin distorsión, sin errores de consola.
-11. ✅ (2026-07-25) Mismo logo también en el header interior
-    (`components/Layout.tsx`, `h-10`, reemplaza el texto "labapp"). Además,
-    renombrado **solo de texto en la UI** — sin tocar `catalog_code`,
-    `catalog_item_id` ni ningún endpoint —, del sub-tab de catálogo a
-    "Lotes": label del sub-tab (`Lotes (N)`), formulario ("Nuevo lote" /
-    "Editar lote" / "Código de lote"), estado vacío de la tabla ("Sin
-    lotes"). El tab superior/módulo general sigue diciendo "Catálogo"
-    (a propósito — se refiere a género+especie+lotes en conjunto). En
-    `CapturaPage.tsx`: "Lotes" como título de la lista y "Selecciona un
-    lote para capturar." Se extendió el mismo criterio, por consistencia,
-    a tres lugares no listados explícitamente que exponen la misma entidad
-    (`catalog_items`): el error de carga en Captura, el aviso al borrar una
-    especie con lotes asociados, y dos textos del Dashboard ("Lotes con
-    estado", "Sin lotes con captura registrada"). Verificado en navegador
-    real contra producción: logo del header carga, textos renombrados
-    correctos en las tres pantallas, flujo completo crear→editar→borrar un
-    lote de prueba, sin residuos de datos ni errores de consola.
-12. ✅ (2026-07-25) Filtro por género/especie en el Dashboard + ordenamiento
-    por columna en las tablas de Urgentes y Lotes.
-    - Backend (`app/routers/dashboard.py`): `GET /api/dashboard/summary` y
-      `GET /api/dashboard/urgentes` aceptan `genus_id`/`species_id`
-      opcionales — el filtrado es en SQL (join a `CatalogItem`/`Species`),
-      no se trae todo y se filtra en Python. `summary` combina el filtro con
-      `desde`/`hasta` ya existente (aplica a las 4 tarjetas Y al cálculo de
-      `% merma`); `urgentes` no tenía ni necesita rango de fechas (siempre
-      es snapshot del log más reciente), solo el filtro de género/especie.
-    - Frontend (`DashboardPage.tsx`): selects de Género/Especie junto a
-      Desde/Hasta; el de Especie se filtra en memoria según el género
-      elegido (mismo patrón que el formulario de creación de especie). Un
-      solo botón "Aplicar filtros" recarga `summary` y `urgentes` juntos.
-    - Ordenamiento (`lib/useSort.ts` + `components/SortableTh.tsx`,
-      reutilizados en `DashboardPage` y `CatalogSection`): 100% en frontend,
-      sobre el array ya cargado — a propósito, sin tocar el backend, porque
-      son listados chicos (no miles de filas). Click en header ordena asc,
-      segundo click invierte a desc, flecha ▲/▼ indica columna y dirección
-      activa. Fechas ISO (`YYYY-MM-DD`) ordenan bien con comparación de
-      string simple, sin parseo especial.
-    Probado end-to-end en navegador real contra producción con dos lotes de
-    prueba en géneros distintos y valores conocidos: el dropdown de especie
-    se limita al género elegido, aplicar el filtro reduce exactamente
-    tarjetas y tabla al género filtrado (verificado con la suma exacta de
-    frascos), quitar el filtro restaura todo, ordenamiento asc/desc
-    correcto por Folio (alfabético), Normales (numérico) y Última resiembra
-    (cronológico) en Urgentes, y por Folio en Lotes. Sin residuos de datos
-    ni errores de consola.
-
 ## Roles
 
 | Rol | Puede |
 |---|---|
-| `admin` | CRUD de usuarios, taxonomía, catálogo; dashboard; export; corregir logs históricos |
-| `tech` | Captura semanal (crear logs) por catálogo; sin acceso a CRUD de catálogo/taxonomía ni export |
+| `admin` | CRUD de catálogos, crear lotes, capturar eventos, dashboard, CRUD de usuarios |
+| `operador` | Crear lotes, capturar eventos, ver catálogos y dashboard (sin CRUD de catálogos ni usuarios) |

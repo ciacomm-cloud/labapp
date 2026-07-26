@@ -1,68 +1,35 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
-import { useAuth } from './auth/AuthContext'
-import { Layout } from './components/Layout'
-import { ProtectedRoute } from './components/ProtectedRoute'
-import { LoginPage } from './pages/LoginPage'
-import { CapturaPage } from './pages/CapturaPage'
-import { DashboardPage } from './pages/DashboardPage'
-import { CatalogoPage } from './pages/CatalogoPage'
-import { UsersPage } from './pages/UsersPage'
-
-function AuthedLayout({ children }: { children: React.ReactNode }) {
-  return <Layout>{children}</Layout>
-}
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { AuthProvider } from "./context/AuthContext";
+import { ProtectedRoute, AdminRoute } from "./components/ProtectedRoute";
+import Layout from "./components/Layout";
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+import CrearLote from "./pages/CrearLote";
+import Actualizar from "./pages/Actualizar";
+import Catalogos from "./pages/Catalogos";
+import Usuarios from "./pages/Usuarios";
 
 function App() {
-  const { loading } = useAuth()
-
-  if (loading) return <div className="p-8 text-center text-stone-500">Cargando...</div>
-
   return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/captura"
-        element={
-          <ProtectedRoute>
-            <AuthedLayout>
-              <CapturaPage />
-            </AuthedLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/dashboard"
-        element={
-          <ProtectedRoute roles={['admin']}>
-            <AuthedLayout>
-              <DashboardPage />
-            </AuthedLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/catalogo"
-        element={
-          <ProtectedRoute roles={['admin']}>
-            <AuthedLayout>
-              <CatalogoPage />
-            </AuthedLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route
-        path="/usuarios"
-        element={
-          <ProtectedRoute roles={['admin']}>
-            <AuthedLayout>
-              <UsersPage />
-            </AuthedLayout>
-          </ProtectedRoute>
-        }
-      />
-      <Route path="*" element={<Navigate to="/captura" replace />} />
-    </Routes>
-  )
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route element={<ProtectedRoute />}>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/crear-lote" element={<CrearLote />} />
+              <Route path="/actualizar" element={<Actualizar />} />
+              <Route path="/catalogos" element={<Catalogos />} />
+              <Route element={<AdminRoute />}>
+                <Route path="/usuarios" element={<Usuarios />} />
+              </Route>
+            </Route>
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
+  );
 }
 
-export default App
+export default App;
