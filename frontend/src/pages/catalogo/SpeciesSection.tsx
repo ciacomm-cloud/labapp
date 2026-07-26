@@ -48,7 +48,7 @@ export function SpeciesSection({
   }
 
   const handleDelete = async (s: SpeciesOut) => {
-    if (!confirm(`¿Borrar "${s.name}"? Falla si tiene catálogos asociados.`)) return
+    if (!confirm(`¿Borrar "${s.name}"? Falla si tiene lotes asociados.`)) return
     setError(null)
     try {
       await api.delete(`/api/inventario/species/${s.id}`)

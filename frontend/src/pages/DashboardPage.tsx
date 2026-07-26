@@ -114,7 +114,7 @@ export function DashboardPage() {
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <StatCard label="Frascos en laboratorio" value={summary.total_frascos_laboratorio} />
             <StatCard label="En rescate activo" value={summary.frascos_en_rescate_activos} />
-            <StatCard label="Catálogos con estado" value={summary.catalogos_con_estado} />
+            <StatCard label="Lotes con estado" value={summary.catalogos_con_estado} />
             <StatCard label={`% merma (${summary.periodo_desde} a ${summary.periodo_hasta})`} value={`${summary.porcentaje_merma}%`} />
           </div>
         )}
@@ -160,7 +160,7 @@ export function DashboardPage() {
               {urgentes.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-3 py-6 text-center text-stone-400">
-                    Sin catálogos con captura registrada
+                    Sin lotes con captura registrada
                   </td>
                 </tr>
               )}

@@ -35,7 +35,7 @@ export function CatalogoPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: 'genera', label: `Géneros (${genera.length})` },
     { key: 'species', label: `Especies (${species.length})` },
-    { key: 'catalog', label: `Catálogo (${items.length})` },
+    { key: 'catalog', label: `Lotes (${items.length})` },
   ]
 
   if (loading) return <p className="text-sm text-stone-500">Cargando...</p>

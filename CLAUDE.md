@@ -336,6 +336,23 @@ npm run dev   # proxea /api a http://127.0.0.1:8766 (ver vite.config.ts)
     una vez integrado al build (queda solo dentro de `assets/` con el hash
     de Vite). Verificado en producción con Playwright: la imagen carga
     (200, `naturalWidth` > 0), sin distorsión, sin errores de consola.
+11. ✅ (2026-07-25) Mismo logo también en el header interior
+    (`components/Layout.tsx`, `h-10`, reemplaza el texto "labapp"). Además,
+    renombrado **solo de texto en la UI** — sin tocar `catalog_code`,
+    `catalog_item_id` ni ningún endpoint —, del sub-tab de catálogo a
+    "Lotes": label del sub-tab (`Lotes (N)`), formulario ("Nuevo lote" /
+    "Editar lote" / "Código de lote"), estado vacío de la tabla ("Sin
+    lotes"). El tab superior/módulo general sigue diciendo "Catálogo"
+    (a propósito — se refiere a género+especie+lotes en conjunto). En
+    `CapturaPage.tsx`: "Lotes" como título de la lista y "Selecciona un
+    lote para capturar." Se extendió el mismo criterio, por consistencia,
+    a tres lugares no listados explícitamente que exponen la misma entidad
+    (`catalog_items`): el error de carga en Captura, el aviso al borrar una
+    especie con lotes asociados, y dos textos del Dashboard ("Lotes con
+    estado", "Sin lotes con captura registrada"). Verificado en navegador
+    real contra producción: logo del header carga, textos renombrados
+    correctos en las tres pantallas, flujo completo crear→editar→borrar un
+    lote de prueba, sin residuos de datos ni errores de consola.
 
 ## Roles
 

@@ -32,7 +32,7 @@ export function CapturaPage() {
     api
       .get<CatalogItemOut[]>('/api/catalog-items')
       .then(setItems)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'No se pudo cargar el catálogo'))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'No se pudo cargar los lotes'))
       .finally(() => setLoadingItems(false))
   }, [])
 
@@ -97,7 +97,7 @@ export function CapturaPage() {
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       <div className="md:col-span-1">
-        <h2 className="mb-2 text-sm font-semibold text-stone-900">Catálogo</h2>
+        <h2 className="mb-2 text-sm font-semibold text-stone-900">Lotes</h2>
         <input
           placeholder="Buscar por folio, especie o género..."
           className="mb-3 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
@@ -132,7 +132,7 @@ export function CapturaPage() {
 
       <div className="md:col-span-2">
         {!selected ? (
-          <p className="text-sm text-stone-500">Selecciona un catálogo para capturar.</p>
+          <p className="text-sm text-stone-500">Selecciona un lote para capturar.</p>
         ) : (
           <form onSubmit={handleSubmit} className="rounded-lg border border-stone-200 bg-white p-5">
             <h2 className="mb-1 text-lg font-semibold text-stone-900">{selected.catalog_code}</h2>

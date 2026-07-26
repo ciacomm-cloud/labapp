@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import logo from '../assets/logolabapp.jpg'
 
 function Tab({ to, children }: { to: string; children: ReactNode }) {
   return (
@@ -25,7 +26,7 @@ export function Layout({ children }: { children: ReactNode }) {
       <header className="border-b border-stone-200 bg-white">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-4">
-            <span className="text-lg font-semibold text-stone-900">labapp</span>
+            <img src={logo} alt="labapp" className="h-10 w-auto object-contain" />
             <nav className="flex gap-1">
               <Tab to="/captura">Captura</Tab>
               {user?.role === 'admin' && <Tab to="/dashboard">Dashboard</Tab>}

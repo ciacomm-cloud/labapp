@@ -43,14 +43,14 @@ export function CatalogSection({
       resetForm()
       await reload()
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'No se pudo guardar el catálogo')
+      setError(err instanceof ApiError ? err.message : 'No se pudo guardar el lote')
     } finally {
       setSubmitting(false)
     }
   }
 
   const handleDelete = async (item: CatalogItemOut) => {
-    if (!confirm(`¿Borrar el catálogo "${item.catalog_code}"? Falla si tiene logs asociados.`)) return
+    if (!confirm(`¿Borrar el lote "${item.catalog_code}"? Falla si tiene logs asociados.`)) return
     setError(null)
     try {
       await api.delete(`/api/catalog-items/${item.id}`)
@@ -63,9 +63,9 @@ export function CatalogSection({
   return (
     <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
       <form onSubmit={handleSubmit} className="rounded-lg border border-stone-200 bg-white p-4 md:col-span-1">
-        <h3 className="mb-3 text-sm font-semibold text-stone-900">{editingId ? 'Editar catálogo' : 'Nuevo catálogo'}</h3>
+        <h3 className="mb-3 text-sm font-semibold text-stone-900">{editingId ? 'Editar lote' : 'Nuevo lote'}</h3>
 
-        <label className="mb-1 block text-sm font-medium text-stone-700">Folio (catalog_code)</label>
+        <label className="mb-1 block text-sm font-medium text-stone-700">Código de lote</label>
         <input
           className="mb-3 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none disabled:bg-stone-100"
           value={form.catalog_code}
@@ -154,7 +154,7 @@ export function CatalogSection({
               {items.length === 0 && (
                 <tr>
                   <td colSpan={4} className="px-3 py-6 text-center text-stone-400">
-                    Sin catálogos
+                    Sin lotes
                   </td>
                 </tr>
               )}
